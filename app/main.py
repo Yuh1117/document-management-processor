@@ -2,7 +2,7 @@ from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 from app import app
 
-model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+model = SentenceTransformer("sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
 
 class EmbedRequest(BaseModel):
     text: str
