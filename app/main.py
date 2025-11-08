@@ -13,4 +13,4 @@ class EmbedResponse(BaseModel):
 @app.post("/embed", response_model=EmbedResponse)
 def embed(req: EmbedRequest):
     vector = model.encode(req.text).tolist()
-    return {"embedding": vector}
+    return EmbedResponse(embedding=vector)
