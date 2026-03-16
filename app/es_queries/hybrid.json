@@ -1,0 +1,20 @@
+{
+  "knn": {
+    "field": "content_vector",
+    "query_vector": [],
+    "k": 5,
+    "num_candidates": 25
+  },
+  "query": {
+    "bool": {
+      "should": [
+        {
+          "match": {
+            "content": ""
+          }
+        }
+      ],
+      "filter": []
+    }
+  }
+}
