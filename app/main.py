@@ -1,13 +1,10 @@
 from fastapi import Depends
 from app import app
-from app.core.index_bootstrap import ensure_documents_index_exists
 from app.deps import get_embedding_service, get_search_service
 from app.models.embeddings import EmbedRequest, EmbedResponse
 from app.models.search import SearchRequest, SearchResponse
 from app.services.embedding_service import EmbeddingService
 from app.services.search_service import SearchService
-
-ensure_documents_index_exists()
 
 
 @app.post("/embed", response_model=EmbedResponse)
