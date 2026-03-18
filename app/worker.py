@@ -1,9 +1,7 @@
 import json
 from typing import List
-
 import pika
 import requests
-
 from app.core.config import (
     BACKEND_BASE_URL,
     CHUNK_OVERLAP,
@@ -12,19 +10,15 @@ from app.core.config import (
     RABBITMQ_DOCUMENT_QUEUE,
     RABBITMQ_URL,
 )
-from app.core.es import get_es
+from app.core.es import es_client
 from app.services.embedding_service import EmbeddingService, embedding_service
-from app.services.ocr_service import (
-    ImageTooBlurryError,
-    cleanup_temp,
-    download_to_temp,
-    run_ocr,
-)
+from app.services.ocr_service import ImageTooBlurryError, OcrService, ocr_service
 
 
 class DocumentIndexer:
-    def __init__(self, embedding: EmbeddingService) -> None:
+    def __init__(self, embedding: EmbeddingService, ocr: OcrService) -> None:
         self._embedding = embedding
+        self._ocr = ocr
 
     @staticmethod
     def compute_ocr_score(text: str) -> int:
@@ -80,11 +74,11 @@ class DocumentIndexer:
         try:
             self.update_processing_status(doc_id, "PROCESSING", None, None)
 
-            temp_path = download_to_temp(file_url, file_type)
+            temp_path = self._ocr.download_to_temp(file_url, file_type)
 
             # MLOps - Data Validation (blur) + OCR
             try:
-                raw_text = run_ocr(temp_path, file_type)
+                raw_text = self._ocr.run_ocr(temp_path, file_type)
             except ImageTooBlurryError as e:
                 self.update_processing_status(doc_id, "FAILED", 0, str(e))
                 ch.basic_ack(delivery_tag=method.delivery_tag)
@@ -105,7 +99,7 @@ class DocumentIndexer:
             chunks = self.chunk_text(raw_text)
 
             # Index Elasticsearch
-            es = get_es()
+            es = es_client.get_client()
             for i, chunk in enumerate(chunks):
                 vector = self._embedding.encode_text(chunk)
                 doc_body = {
@@ -132,11 +126,11 @@ class DocumentIndexer:
             ch.basic_ack(delivery_tag=method.delivery_tag)
         finally:
             if temp_path:
-                cleanup_temp(temp_path)
+                self._ocr.cleanup_temp(temp_path)
 
 
 def main():
-    indexer = DocumentIndexer(embedding_service)
+    indexer = DocumentIndexer(embedding_service, ocr_service)
 
     params = pika.URLParameters(RABBITMQ_URL)
     connection = pika.BlockingConnection(params)

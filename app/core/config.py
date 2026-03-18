@@ -21,9 +21,10 @@ SENTENCE_TRANSFORMER_MODEL_NAME = os.getenv(
 )
 
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
-ES_MAPPINGS_DIR = os.path.join(BASE_DIR, "es_mappings")
+CONSTANTS_DIR = os.path.join(BASE_DIR, "constants")
+ES_MAPPINGS_DIR = os.path.join(CONSTANTS_DIR, "es_mappings")
+ES_QUERIES_DIR = os.path.join(CONSTANTS_DIR, "es_queries")
 DOCUMENTS_INDEX_MAPPING_FILE = os.path.join(ES_MAPPINGS_DIR, "documents_index.json")
-ES_QUERIES_DIR = os.path.join(BASE_DIR, "es_queries")
 FULL_TEXT_QUERY_FILE = os.path.join(ES_QUERIES_DIR, "full_text.json")
 SEMANTIC_QUERY_FILE = os.path.join(ES_QUERIES_DIR, "semantic.json")
 HYBRID_QUERY_FILE = os.path.join(ES_QUERIES_DIR, "hybrid.json")

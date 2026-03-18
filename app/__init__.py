@@ -1,12 +1,12 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.core.index_bootstrap import ensure_documents_index_exists
+from app.core.index_bootstrap import IndexBootstrap
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    ensure_documents_index_exists()
+    IndexBootstrap().ensure_index_exists()
 
     yield
 

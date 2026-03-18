@@ -5,7 +5,7 @@ from app.core.config import (
     HYBRID_QUERY_FILE,
     SEMANTIC_QUERY_FILE,
 )
-from app.core.es import get_es
+from app.core.es import es_client
 from app.models.search import SearchMode, SearchHit
 from app.services.embedding_service import EmbeddingService, embedding_service
 
@@ -36,7 +36,7 @@ class SearchService:
         top_k: int = 5,
         mode: SearchMode = SearchMode.SEMANTIC,
     ) -> List[SearchHit]:
-        es = get_es()
+        es = es_client.get_client()
         filters = self._build_filters(owner_id, folder_id)
 
         if mode == SearchMode.FULL_TEXT:
