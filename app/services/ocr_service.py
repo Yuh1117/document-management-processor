@@ -1,17 +1,28 @@
 from __future__ import annotations
+import logging
 import os
+import re
 import tempfile
 from typing import List
+import boto3
 import cv2
 import easyocr
 import fitz
 import numpy as np
 import requests
+from botocore.exceptions import BotoCoreError, ClientError
 
 from app.core.config import (
+    AWS_S3_ACCESS_KEY,
+    AWS_S3_REGION,
+    AWS_S3_SECRET_KEY,
     LAPLACIAN_VAR_THRESHOLD,
     TEMP_DIR,
 )
+
+logger = logging.getLogger(__name__)
+
+_S3_URI = re.compile(r"^s3://([^/]+)/(.+)$")
 
 
 class ImageTooBlurryError(Exception):
@@ -37,26 +48,57 @@ class OcrService:
             self._reader = easyocr.Reader(self._languages, gpu=False)
         return self._reader
 
+    def _s3_client(self):
+        return boto3.client(
+            "s3",
+            aws_access_key_id=AWS_S3_ACCESS_KEY or None,
+            aws_secret_access_key=AWS_S3_SECRET_KEY or None,
+            region_name=AWS_S3_REGION,
+        )
+
+    @staticmethod
+    def _suffix_for_type(file_type: str) -> str:
+        ft = (file_type or "").lower()
+        if "image/png" in ft or ft == "image/png":
+            return "png"
+        if "image/jpeg" in ft or ft == "image/jpeg" or "image/jpg" in ft:
+            return "jpg"
+        if "application/pdf" in ft or ft == "application/pdf":
+            return "pdf"
+        return "bin"
+
     def download_to_temp(self, file_url: str, file_type: str) -> str:
-        resp = requests.get(file_url, timeout=60, stream=True)
-        resp.raise_for_status()
-
-        ext = "bin"
-        if "image/png" in file_type or file_type == "image/png":
-            ext = "png"
-        elif (
-            "image/jpeg" in file_type
-            or file_type == "image/jpeg"
-            or "image/jpg" in file_type
-        ):
-            ext = "jpg"
-        elif "application/pdf" in file_type or file_type == "application/pdf":
-            ext = "pdf"
-
+        ext = self._suffix_for_type(file_type)
         fd, path = tempfile.mkstemp(suffix=f".{ext}", dir=self._temp_dir)
-        with os.fdopen(fd, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=8192):
-                f.write(chunk)
+        os.close(fd)
+
+        try:
+            if file_url.startswith("s3://"):
+                m = _S3_URI.match(file_url)
+                if not m:
+                    raise ValueError(f"Invalid S3 URI: {file_url!r}")
+                bucket, key = m.group(1), m.group(2)
+                try:
+                    self._s3_client().download_file(bucket, key, path)
+                except (ClientError, BotoCoreError) as e:
+                    logger.exception(
+                        "S3 download failed bucket=%s key=%s: %s", bucket, key, e
+                    )
+                    raise
+            else:
+                resp = requests.get(file_url, timeout=60, stream=True)
+                resp.raise_for_status()
+                with open(path, "wb") as f:
+                    for chunk in resp.iter_content(chunk_size=8192):
+                        f.write(chunk)
+        except Exception:
+            try:
+                if path and os.path.isfile(path):
+                    os.unlink(path)
+            except OSError:
+                pass
+            raise
+
         return path
 
     def validate_image_blur(self, image_path: str) -> tuple[bool, float]:

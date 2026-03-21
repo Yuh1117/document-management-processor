@@ -9,6 +9,10 @@ ELASTICSEARCH_INDEX = os.getenv("ELASTICSEARCH_INDEX")
 
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL")
 
+AWS_S3_ACCESS_KEY = os.getenv("AWS_S3_ACCESS_KEY")
+AWS_S3_SECRET_KEY = os.getenv("AWS_S3_SECRET_KEY")
+AWS_S3_REGION = os.getenv("AWS_S3_REGION")
+
 # Worker: temp storage and OCR
 TEMP_DIR = os.getenv("TEMP_DIR", tempfile.gettempdir())
 LAPLACIAN_VAR_THRESHOLD = float(os.getenv("LAPLACIAN_VAR_THRESHOLD", "100.0"))

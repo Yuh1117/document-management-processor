@@ -1,4 +1,5 @@
 import json
+import logging
 from typing import List
 import pika
 import requests
@@ -13,6 +14,8 @@ from app.core.config import (
 from app.core.es import es_client
 from app.services.embedding_service import EmbeddingService, embedding_service
 from app.services.ocr_service import ImageTooBlurryError, OcrService, ocr_service
+
+logger = logging.getLogger(__name__)
 
 
 class DocumentIndexer:
@@ -49,21 +52,49 @@ class DocumentIndexer:
     def update_processing_status(
         doc_id: int, status: str, score: int | None, error: str | None
     ) -> None:
-        url = f"{BACKEND_BASE_URL}/internal/documents/{doc_id}/processing-status"
+        base = (BACKEND_BASE_URL or "").rstrip("/")
+        url = f"{base}/api/internal/documents/{doc_id}/processing-status"
         payload = {
             "processingStatus": status,
             "ocrQualityScore": score,
             "processingError": error,
         }
         try:
-            requests.patch(url, json=payload, timeout=10)
-        except Exception:
-            pass
+            resp = requests.patch(url, json=payload, timeout=10)
+            if not resp.ok:
+                logger.warning(
+                    "processing-status PATCH failed for doc_id=%s status=%s http=%s body=%s",
+                    doc_id,
+                    status,
+                    resp.status_code,
+                    (resp.text or "")[:500],
+                )
+        except Exception as e:
+            logger.warning(
+                "processing-status PATCH error for doc_id=%s status=%s: %s",
+                doc_id,
+                status,
+                e,
+            )
 
     def process_message(self, ch, method, properties, body):
-        msg = json.loads(body)
-        doc_id = msg["doc_id"]
-        file_url = msg["file_url"]
+        try:
+            raw = bytes(body) if isinstance(body, memoryview) else body
+            if isinstance(raw, (bytes, bytearray)):
+                text = raw.decode("utf-8")
+            else:
+                text = raw
+            msg = json.loads(text)
+            doc_id = msg["doc_id"]
+            file_url = msg["file_url"]
+        except (UnicodeDecodeError, json.JSONDecodeError, TypeError, KeyError) as e:
+            logger.warning(
+                "Skipping invalid queue message (expected UTF-8 JSON with doc_id, file_url): %s",
+                e,
+            )
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+            return
+
         file_type = msg.get("file_type", "application/octet-stream")
         owner_id = msg.get("owner_id")
         folder_id = msg.get("folder_id")
@@ -72,19 +103,28 @@ class DocumentIndexer:
         temp_path: str | None = None
 
         try:
+            logger.info(
+                "Processing document doc_id=%s type=%s name=%r",
+                doc_id,
+                file_type,
+                doc_name,
+            )
             self.update_processing_status(doc_id, "PROCESSING", None, None)
 
             temp_path = self._ocr.download_to_temp(file_url, file_type)
+            logger.debug("Downloaded to temp path=%s", temp_path)
 
             # MLOps - Data Validation (blur) + OCR
             try:
                 raw_text = self._ocr.run_ocr(temp_path, file_type)
             except ImageTooBlurryError as e:
+                logger.warning("OCR rejected blurry image doc_id=%s: %s", doc_id, e)
                 self.update_processing_status(doc_id, "FAILED", 0, str(e))
                 ch.basic_ack(delivery_tag=method.delivery_tag)
                 return
 
             if not raw_text.strip():
+                logger.warning("OCR produced no text doc_id=%s", doc_id)
                 self.update_processing_status(
                     doc_id,
                     "FAILED",
@@ -97,6 +137,13 @@ class DocumentIndexer:
             # Chunking + Embedding
             score = self.compute_ocr_score(raw_text)
             chunks = self.chunk_text(raw_text)
+            logger.info(
+                "OCR done doc_id=%s ocr_score=%s chunks=%s chars=%s",
+                doc_id,
+                score,
+                len(chunks),
+                len(raw_text),
+            )
 
             # Index Elasticsearch
             es = es_client.get_client()
@@ -119,9 +166,16 @@ class DocumentIndexer:
                 )
 
             # ACK
+            logger.info(
+                "Indexed doc_id=%s into %s (%s chunks)",
+                doc_id,
+                ELASTICSEARCH_INDEX,
+                len(chunks),
+            )
             self.update_processing_status(doc_id, "COMPLETED", score, None)
             ch.basic_ack(delivery_tag=method.delivery_tag)
         except Exception as e:
+            logger.exception("Processing failed doc_id=%s", doc_id)
             self.update_processing_status(doc_id, "FAILED", 0, str(e))
             ch.basic_ack(delivery_tag=method.delivery_tag)
         finally:
@@ -130,6 +184,16 @@ class DocumentIndexer:
 
 
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    )
+    logger.info(
+        "Worker starting queue=%s elasticsearch_index=%s",
+        RABBITMQ_DOCUMENT_QUEUE,
+        ELASTICSEARCH_INDEX,
+    )
+
     indexer = DocumentIndexer(embedding_service, ocr_service)
 
     params = pika.URLParameters(RABBITMQ_URL)
@@ -140,6 +204,7 @@ def main():
     channel.basic_consume(
         queue=RABBITMQ_DOCUMENT_QUEUE, on_message_callback=indexer.process_message
     )
+    logger.info("Consuming messages on %s (prefetch=1)", RABBITMQ_DOCUMENT_QUEUE)
     channel.start_consuming()
 
 
