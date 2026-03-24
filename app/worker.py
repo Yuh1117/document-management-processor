@@ -13,7 +13,12 @@ from app.core.config import (
 )
 from app.core.es import es_client
 from app.services.embedding_service import EmbeddingService, embedding_service
-from app.services.ocr_service import ImageTooBlurryError, OcrService, ocr_service
+from app.services.ocr_service import (
+    ImageTooBlurryError,
+    OcrService,
+    UnsupportedFileTypeError,
+    ocr_service,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -77,22 +82,108 @@ class DocumentIndexer:
                 e,
             )
 
+    @staticmethod
+    def _ack_message(ch, method) -> None:
+        ch.basic_ack(delivery_tag=method.delivery_tag)
+
+    @staticmethod
+    def _decode_message_body(body) -> dict:
+        raw = bytes(body) if isinstance(body, memoryview) else body
+        text = raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else raw
+        return json.loads(text)
+
+    def _parse_message(self, body) -> tuple[int, str, dict]:
+        msg = self._decode_message_body(body)
+        doc_id = msg["doc_id"]
+        file_url = msg["file_url"]
+        return doc_id, file_url, msg
+
+    def _handle_ocr_failure(
+        self, ch, method, doc_id: int, message: str, log_msg: str
+    ) -> None:
+        logger.warning(log_msg, doc_id, message)
+        self.update_processing_status(doc_id, "FAILED", 0, message)
+        self._ack_message(ch, method)
+
+    def _extract_text_or_fail(
+        self, ch, method, doc_id: int, temp_path: str, file_type: str
+    ):
+        try:
+            return self._ocr.run_ocr(temp_path, file_type)
+        except ImageTooBlurryError as e:
+            self._handle_ocr_failure(
+                ch,
+                method,
+                doc_id,
+                str(e),
+                "OCR rejected blurry image doc_id=%s: %s",
+            )
+            return None
+        except UnsupportedFileTypeError as e:
+            self._handle_ocr_failure(
+                ch,
+                method,
+                doc_id,
+                str(e),
+                "OCR rejected unsupported type doc_id=%s: %s",
+            )
+            return None
+
+    def _build_doc_body(
+        self,
+        doc_id: int,
+        chunk_index: int,
+        chunk: str,
+        owner_id,
+        folder_id,
+        doc_name,
+    ) -> dict:
+        vector = self._embedding.encode_text(chunk)
+        doc_body = {
+            "chunk_id": f"{doc_id}_{chunk_index}",
+            "document_id": str(doc_id),
+            "owner_id": str(owner_id) if owner_id is not None else None,
+            "folder_id": str(folder_id) if folder_id is not None else None,
+            "content": chunk,
+            "content_vector": vector,
+        }
+        if doc_name is not None:
+            doc_body["name"] = doc_name
+        return doc_body
+
+    def _index_chunks(
+        self,
+        doc_id: int,
+        chunks: List[str],
+        owner_id,
+        folder_id,
+        doc_name,
+    ) -> None:
+        es = es_client.get_client()
+        for i, chunk in enumerate(chunks):
+            doc_body = self._build_doc_body(
+                doc_id=doc_id,
+                chunk_index=i,
+                chunk=chunk,
+                owner_id=owner_id,
+                folder_id=folder_id,
+                doc_name=doc_name,
+            )
+            es.index(
+                index=ELASTICSEARCH_INDEX,
+                id=f"{doc_id}_{i + 1}",
+                document=doc_body,
+            )
+
     def process_message(self, ch, method, properties, body):
         try:
-            raw = bytes(body) if isinstance(body, memoryview) else body
-            if isinstance(raw, (bytes, bytearray)):
-                text = raw.decode("utf-8")
-            else:
-                text = raw
-            msg = json.loads(text)
-            doc_id = msg["doc_id"]
-            file_url = msg["file_url"]
+            doc_id, file_url, msg = self._parse_message(body)
         except (UnicodeDecodeError, json.JSONDecodeError, TypeError, KeyError) as e:
             logger.warning(
                 "Skipping invalid queue message (expected UTF-8 JSON with doc_id, file_url): %s",
                 e,
             )
-            ch.basic_ack(delivery_tag=method.delivery_tag)
+            self._ack_message(ch, method)
             return
 
         file_type = msg.get("file_type", "application/octet-stream")
@@ -114,13 +205,14 @@ class DocumentIndexer:
             temp_path = self._ocr.download_to_temp(file_url, file_type)
             logger.debug("Downloaded to temp path=%s", temp_path)
 
-            # MLOps - Data Validation (blur) + OCR
-            try:
-                raw_text = self._ocr.run_ocr(temp_path, file_type)
-            except ImageTooBlurryError as e:
-                logger.warning("OCR rejected blurry image doc_id=%s: %s", doc_id, e)
-                self.update_processing_status(doc_id, "FAILED", 0, str(e))
-                ch.basic_ack(delivery_tag=method.delivery_tag)
+            raw_text = self._extract_text_or_fail(
+                ch=ch,
+                method=method,
+                doc_id=doc_id,
+                temp_path=temp_path,
+                file_type=file_type,
+            )
+            if raw_text is None:
                 return
 
             if not raw_text.strip():
@@ -131,7 +223,7 @@ class DocumentIndexer:
                     0,
                     "Could not extract content (OCR produced no text)",
                 )
-                ch.basic_ack(delivery_tag=method.delivery_tag)
+                self._ack_message(ch, method)
                 return
 
             # Chunking + Embedding
@@ -145,25 +237,7 @@ class DocumentIndexer:
                 len(raw_text),
             )
 
-            # Index Elasticsearch
-            es = es_client.get_client()
-            for i, chunk in enumerate(chunks):
-                vector = self._embedding.encode_text(chunk)
-                doc_body = {
-                    "chunk_id": f"{doc_id}_{i}",
-                    "document_id": str(doc_id),
-                    "owner_id": str(owner_id) if owner_id is not None else None,
-                    "folder_id": str(folder_id) if folder_id is not None else None,
-                    "content": chunk,
-                    "content_vector": vector,
-                }
-                if doc_name is not None:
-                    doc_body["name"] = doc_name
-                es.index(
-                    index=ELASTICSEARCH_INDEX,
-                    id=f"{doc_id}_{i}",
-                    document=doc_body,
-                )
+            self._index_chunks(doc_id, chunks, owner_id, folder_id, doc_name)
 
             # ACK
             logger.info(
@@ -173,11 +247,11 @@ class DocumentIndexer:
                 len(chunks),
             )
             self.update_processing_status(doc_id, "COMPLETED", score, None)
-            ch.basic_ack(delivery_tag=method.delivery_tag)
+            self._ack_message(ch, method)
         except Exception as e:
             logger.exception("Processing failed doc_id=%s", doc_id)
             self.update_processing_status(doc_id, "FAILED", 0, str(e))
-            ch.basic_ack(delivery_tag=method.delivery_tag)
+            self._ack_message(ch, method)
         finally:
             if temp_path:
                 self._ocr.cleanup_temp(temp_path)

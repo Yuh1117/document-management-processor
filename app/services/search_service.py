@@ -28,6 +28,62 @@ class SearchService:
             filters.append({"term": {"folder_id": str(folder_id)}})
         return filters
 
+    @staticmethod
+    def _fill_full_text_query(
+        body: Dict[str, Any], query: str, filters: list[dict]
+    ) -> Dict[str, Any]:
+        body["query"]["bool"]["must"][0]["multi_match"]["query"] = query
+        body["query"]["bool"]["filter"] = filters
+        return body
+
+    @staticmethod
+    def _fill_semantic_or_hybrid_query(
+        body: Dict[str, Any],
+        query: str,
+        query_vector: list[float],
+        top_k: int,
+        filters: list[dict],
+        mode: SearchMode,
+    ) -> Dict[str, Any]:
+        body["knn"]["query_vector"] = query_vector
+        body["knn"]["k"] = top_k
+        body["knn"]["num_candidates"] = top_k * 5
+        body["query"]["bool"]["filter"] = filters
+        if mode == SearchMode.HYBRID:
+            body["query"]["bool"]["should"][0]["multi_match"]["query"] = query
+        return body
+
+    def _build_search_body(
+        self, query: str, top_k: int, filters: list[dict], mode: SearchMode
+    ) -> Dict[str, Any]:
+        if mode == SearchMode.FULL_TEXT:
+            body = self._load_query_template(FULL_TEXT_QUERY_FILE)
+            return self._fill_full_text_query(body, query, filters)
+
+        query_vector = self._embedding.encode_text(query)
+        template_path = (
+            SEMANTIC_QUERY_FILE if mode == SearchMode.SEMANTIC else HYBRID_QUERY_FILE
+        )
+        body = self._load_query_template(template_path)
+        return self._fill_semantic_or_hybrid_query(
+            body=body,
+            query=query,
+            query_vector=query_vector,
+            top_k=top_k,
+            filters=filters,
+            mode=mode,
+        )
+
+    @staticmethod
+    def _to_hits(resp: Dict[str, Any]) -> List[SearchHit]:
+        return [
+            SearchHit(
+                document_id=hit["_source"]["document_id"],
+                score=hit["_score"],
+            )
+            for hit in resp["hits"]["hits"]
+        ]
+
     def search(
         self,
         query: str,
@@ -38,38 +94,9 @@ class SearchService:
     ) -> List[SearchHit]:
         es = es_client.get_client()
         filters = self._build_filters(owner_id, folder_id)
-
-        if mode == SearchMode.FULL_TEXT:
-            body = self._load_query_template(FULL_TEXT_QUERY_FILE)
-            body["query"]["bool"]["must"][0]["multi_match"]["query"] = query
-            body["query"]["bool"]["filter"] = filters
-        else:
-            query_vector = self._embedding.encode_text(query)
-            num_candidates = top_k * 5
-
-            if mode == SearchMode.SEMANTIC:
-                body = self._load_query_template(SEMANTIC_QUERY_FILE)
-            else:
-                body = self._load_query_template(HYBRID_QUERY_FILE)
-
-            body["knn"]["query_vector"] = query_vector
-            body["knn"]["k"] = top_k
-            body["knn"]["num_candidates"] = num_candidates
-            body["query"]["bool"]["filter"] = filters
-            if mode == SearchMode.HYBRID:
-                body["query"]["bool"]["should"][0]["multi_match"]["query"] = query
-
+        body = self._build_search_body(query, top_k, filters, mode)
         resp = es.search(index=ELASTICSEARCH_INDEX, body=body)
-
-        hits = [
-            SearchHit(
-                document_id=hit["_source"]["document_id"],
-                score=hit["_score"],
-            )
-            for hit in resp["hits"]["hits"]
-        ]
-
-        return hits
+        return self._to_hits(resp)
 
 
 search_service = SearchService(embedding_service)

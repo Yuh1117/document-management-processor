@@ -1,6 +1,14 @@
 import os
 import tempfile
 
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 RABBITMQ_URL = os.getenv("RABBITMQ_URL")
 RABBITMQ_DOCUMENT_QUEUE = os.getenv("RABBITMQ_DOCUMENT_QUEUE")
 
@@ -16,6 +24,7 @@ AWS_S3_REGION = os.getenv("AWS_S3_REGION")
 # Worker: temp storage and OCR
 TEMP_DIR = os.getenv("TEMP_DIR", tempfile.gettempdir())
 LAPLACIAN_VAR_THRESHOLD = float(os.getenv("LAPLACIAN_VAR_THRESHOLD", "100.0"))
+OCR_USE_GPU = _env_bool("OCR_USE_GPU", False)
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "250"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "50"))
 

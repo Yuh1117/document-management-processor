@@ -2,6 +2,8 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shutil
+import subprocess
 import tempfile
 from typing import List
 import boto3
@@ -11,22 +13,35 @@ import fitz
 import numpy as np
 import requests
 from botocore.exceptions import BotoCoreError, ClientError
+from docx import Document
 
 from app.core.config import (
     AWS_S3_ACCESS_KEY,
     AWS_S3_REGION,
     AWS_S3_SECRET_KEY,
     LAPLACIAN_VAR_THRESHOLD,
+    OCR_USE_GPU,
     TEMP_DIR,
 )
 
 logger = logging.getLogger(__name__)
 
 _S3_URI = re.compile(r"^s3://([^/]+)/(.+)$")
+DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+DOC_MIME = "application/msword"
+TXT_MIME = "text/plain"
+PDF_MIME = "application/pdf"
+IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif", ".webp")
 
 
 class ImageTooBlurryError(Exception):
     """Raised when Laplacian variance is below threshold (MLOps data validation)."""
+
+    pass
+
+
+class UnsupportedFileTypeError(Exception):
+    """Raised when file type is not supported by OCR pipeline."""
 
     pass
 
@@ -37,15 +52,18 @@ class OcrService:
         languages: list[str] | None = None,
         blur_threshold: float = LAPLACIAN_VAR_THRESHOLD,
         temp_dir: str = TEMP_DIR,
+        use_gpu: bool = OCR_USE_GPU,
     ) -> None:
         self._languages = languages or ["vi", "en"]
         self._blur_threshold = blur_threshold
         self._temp_dir = temp_dir
+        self._use_gpu = use_gpu
         self._reader: easyocr.Reader | None = None
 
     def _get_reader(self) -> easyocr.Reader:
         if self._reader is None:
-            self._reader = easyocr.Reader(self._languages, gpu=False)
+            logger.info("Initializing EasyOCR reader with gpu=%s", self._use_gpu)
+            self._reader = easyocr.Reader(self._languages, gpu=self._use_gpu)
         return self._reader
 
     def _s3_client(self):
@@ -63,9 +81,34 @@ class OcrService:
             return "png"
         if "image/jpeg" in ft or ft == "image/jpeg" or "image/jpg" in ft:
             return "jpg"
-        if "application/pdf" in ft or ft == "application/pdf":
+        if PDF_MIME in ft or ft == PDF_MIME:
             return "pdf"
+        if DOCX_MIME in ft or ft == DOCX_MIME:
+            return "docx"
+        if DOC_MIME in ft or ft == DOC_MIME:
+            return "doc"
+        if TXT_MIME in ft or ft == TXT_MIME:
+            return "txt"
         return "bin"
+
+    def _download_s3_to_path(self, file_url: str, path: str) -> None:
+        m = _S3_URI.match(file_url)
+        if not m:
+            raise ValueError(f"Invalid S3 URI: {file_url!r}")
+        bucket, key = m.group(1), m.group(2)
+        try:
+            self._s3_client().download_file(bucket, key, path)
+        except (ClientError, BotoCoreError) as e:
+            logger.exception("S3 download failed bucket=%s key=%s: %s", bucket, key, e)
+            raise
+
+    @staticmethod
+    def _download_http_to_path(file_url: str, path: str) -> None:
+        resp = requests.get(file_url, timeout=60, stream=True)
+        resp.raise_for_status()
+        with open(path, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=8192):
+                f.write(chunk)
 
     def download_to_temp(self, file_url: str, file_type: str) -> str:
         ext = self._suffix_for_type(file_type)
@@ -74,23 +117,9 @@ class OcrService:
 
         try:
             if file_url.startswith("s3://"):
-                m = _S3_URI.match(file_url)
-                if not m:
-                    raise ValueError(f"Invalid S3 URI: {file_url!r}")
-                bucket, key = m.group(1), m.group(2)
-                try:
-                    self._s3_client().download_file(bucket, key, path)
-                except (ClientError, BotoCoreError) as e:
-                    logger.exception(
-                        "S3 download failed bucket=%s key=%s: %s", bucket, key, e
-                    )
-                    raise
+                self._download_s3_to_path(file_url, path)
             else:
-                resp = requests.get(file_url, timeout=60, stream=True)
-                resp.raise_for_status()
-                with open(path, "wb") as f:
-                    for chunk in resp.iter_content(chunk_size=8192):
-                        f.write(chunk)
+                self._download_http_to_path(file_url, path)
         except Exception:
             try:
                 if path and os.path.isfile(path):
@@ -116,17 +145,19 @@ class OcrService:
 
     @staticmethod
     def _pdf_to_images(pdf_path: str) -> List[np.ndarray]:
-        doc = fitz.open(pdf_path)
-        images = []
-        for i in range(len(doc)):
-            page = doc.load_page(i)
-            pix = page.get_pixmap(dpi=150)
-            img = np.frombuffer(pix.tobytes(), dtype=np.uint8).reshape(
-                pix.height, pix.width, 3
-            )
-            img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-            images.append(img)
-        doc.close()
+        images: List[np.ndarray] = []
+        mat = fitz.Matrix(150 / 72, 150 / 72)
+
+        with fitz.open(pdf_path) as doc:
+            for i in range(len(doc)):
+                page = doc.load_page(i)
+                pix = page.get_pixmap(matrix=mat, alpha=False)
+                rgb = fitz.Pixmap(fitz.csRGB, pix)
+                h, w = rgb.height, rgb.width
+                img = np.frombuffer(rgb.samples, dtype=np.uint8).reshape(h, w, 3)
+                img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                images.append(img)
+
         return images
 
     def _ocr_image_array(self, img_bgr: np.ndarray) -> str:
@@ -135,36 +166,138 @@ class OcrService:
         results = reader.readtext(img_rgb)
         return " ".join([r[1] for r in results]).strip()
 
-    def run_ocr(self, file_path: str, file_type: str) -> str:
-        ft = (file_type or "").lower()
-
-        if "pdf" in ft or file_path.lower().endswith(".pdf"):
-            images = self._pdf_to_images(file_path)
-            if not images:
-                return ""
-            fd, first_path = tempfile.mkstemp(suffix=".png", dir=self._temp_dir)
-            try:
-                os.close(fd)
-                cv2.imwrite(first_path, images[0])
-                ok, var = self.validate_image_blur(first_path)
-                if not ok:
-                    raise ImageTooBlurryError(
-                        f"First page image/PDF too blurry (Laplacian variance={var:.1f} < {self._blur_threshold})"
-                    )
-            finally:
-                try:
-                    os.unlink(first_path)
-                except OSError:
-                    pass
-            texts = [self._ocr_image_array(img) for img in images]
-            return "\n".join(texts).strip()
-
-        ok, var = self.validate_image_blur(file_path)
+    def _ensure_image_not_blurry(self, image_path: str, context: str = "Image") -> None:
+        ok, var = self.validate_image_blur(image_path)
         if not ok:
             raise ImageTooBlurryError(
-                f"Image too blurry (Laplacian variance={var:.1f} < {self._blur_threshold})"
+                f"{context} too blurry (Laplacian variance={var:.1f} < {self._blur_threshold})"
             )
+
+    def _run_pdf_ocr(self, file_path: str) -> str:
+        images = self._pdf_to_images(file_path)
+        if not images:
+            return ""
+
+        fd, first_path = tempfile.mkstemp(suffix=".png", dir=self._temp_dir)
+        try:
+            os.close(fd)
+            cv2.imwrite(first_path, images[0])
+            self._ensure_image_not_blurry(first_path, context="First page image/PDF")
+        finally:
+            try:
+                os.unlink(first_path)
+            except OSError:
+                pass
+
+        texts = [self._ocr_image_array(img) for img in images]
+        return "\n".join(texts).strip()
+
+    def _run_image_ocr(self, file_path: str) -> str:
+        self._ensure_image_not_blurry(file_path)
         return self._ocr_image(file_path)
+
+    @staticmethod
+    def _resolve_content_type(file_path: str, file_type: str) -> str:
+        ft = (file_type or "").lower()
+        lower_path = file_path.lower()
+        if TXT_MIME in ft or lower_path.endswith(".txt"):
+            return "txt"
+        if DOCX_MIME in ft or lower_path.endswith(".docx"):
+            return "docx"
+        if DOC_MIME in ft or lower_path.endswith(".doc"):
+            return "doc"
+        if "pdf" in ft or lower_path.endswith(".pdf"):
+            return "pdf"
+        if ft.startswith("image/") or lower_path.endswith(IMAGE_EXTENSIONS):
+            return "image"
+        return "unsupported"
+
+    @staticmethod
+    def _read_text_file(file_path: str) -> str:
+        encodings = ["utf-8", "utf-8-sig", "cp1258", "latin-1"]
+        for enc in encodings:
+            try:
+                with open(file_path, "r", encoding=enc) as f:
+                    return f.read().strip()
+            except UnicodeDecodeError:
+                continue
+        with open(file_path, "rb") as f:
+            return f.read().decode("latin-1", errors="ignore").strip()
+
+    @staticmethod
+    def _extract_docx_text(file_path: str) -> str:
+        doc = Document(file_path)
+        paragraphs = [
+            p.text.strip() for p in doc.paragraphs if p.text and p.text.strip()
+        ]
+        return "\n".join(paragraphs).strip()
+
+    def _extract_doc_text_via_soffice(self, file_path: str) -> str:
+        soffice_path = shutil.which("soffice")
+        if not soffice_path:
+            raise RuntimeError(
+                "Cannot process .doc because LibreOffice (soffice) is not installed."
+            )
+
+        out_dir = tempfile.mkdtemp(dir=self._temp_dir)
+        txt_path = os.path.join(
+            out_dir, f"{os.path.splitext(os.path.basename(file_path))[0]}.txt"
+        )
+        try:
+            subprocess.run(
+                [
+                    soffice_path,
+                    "--headless",
+                    "--convert-to",
+                    "txt:Text",
+                    "--outdir",
+                    out_dir,
+                    file_path,
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if not os.path.isfile(txt_path):
+                raise RuntimeError(
+                    "LibreOffice conversion succeeded but output file missing."
+                )
+            return self._read_text_file(txt_path)
+        except subprocess.TimeoutExpired as e:
+            raise RuntimeError(
+                "Timed out while converting .doc with LibreOffice."
+            ) from e
+        except subprocess.CalledProcessError as e:
+            stderr = (e.stderr or "").strip()
+            raise RuntimeError(
+                f"Failed to convert .doc with LibreOffice: {stderr}"
+            ) from e
+        finally:
+            try:
+                if os.path.isfile(txt_path):
+                    os.unlink(txt_path)
+                os.rmdir(out_dir)
+            except OSError:
+                pass
+
+    def run_ocr(self, file_path: str, file_type: str) -> str:
+        content_type = self._resolve_content_type(file_path, file_type)
+
+        if content_type == "unsupported":
+            display_type = file_type or "application/octet-stream"
+            raise UnsupportedFileTypeError(
+                f"Unsupported file type: {display_type}. Supported types: image/*, application/pdf, text/plain, application/msword, application/vnd.openxmlformats-officedocument.wordprocessingml.document."
+            )
+        if content_type == "txt":
+            return self._read_text_file(file_path)
+        if content_type == "docx":
+            return self._extract_docx_text(file_path)
+        if content_type == "doc":
+            return self._extract_doc_text_via_soffice(file_path)
+        if content_type == "pdf":
+            return self._run_pdf_ocr(file_path)
+        return self._run_image_ocr(file_path)
 
     @staticmethod
     def cleanup_temp(path: str) -> None:
