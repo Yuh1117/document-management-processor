@@ -1,13 +1,26 @@
 {
+  "from": 0,
+  "size": 10,
+  "collapse": {
+    "field": "document_id"
+  },
+  "aggs": {
+    "unique_document_count": {
+      "cardinality": {
+        "field": "document_id",
+        "precision_threshold": 40000
+      }
+    }
+  },
   "knn": {
     "field": "content_vector",
     "query_vector": [],
-    "k": 5,
-    "num_candidates": 25
-  },
-  "query": {
-    "bool": {
-      "filter": []
+    "k": 10,
+    "num_candidates": 50,
+    "filter": {
+      "bool": {
+        "filter": []
+      }
     }
   }
 }

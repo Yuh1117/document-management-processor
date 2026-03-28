@@ -5,7 +5,7 @@ import re
 import shutil
 import subprocess
 import tempfile
-from typing import List
+from typing import Any, Callable, List
 import boto3
 import cv2
 import easyocr
@@ -32,6 +32,14 @@ DOC_MIME = "application/msword"
 TXT_MIME = "text/plain"
 PDF_MIME = "application/pdf"
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif", ".webp")
+TEXT_FILE_ENCODINGS = ("utf-8", "utf-8-sig", "cp1258", "latin-1")
+SUPPORTED_OCR_TYPES = (
+    "image/*",
+    "application/pdf",
+    "text/plain",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+)
 
 
 class ImageTooBlurryError(Exception):
@@ -108,7 +116,16 @@ class OcrService:
         resp.raise_for_status()
         with open(path, "wb") as f:
             for chunk in resp.iter_content(chunk_size=8192):
-                f.write(chunk)
+                if chunk:
+                    f.write(chunk)
+
+    @staticmethod
+    def _safe_unlink(path: str) -> None:
+        try:
+            if path and os.path.isfile(path):
+                os.unlink(path)
+        except OSError:
+            pass
 
     def download_to_temp(self, file_url: str, file_type: str) -> str:
         ext = self._suffix_for_type(file_type)
@@ -121,11 +138,7 @@ class OcrService:
             else:
                 self._download_http_to_path(file_url, path)
         except Exception:
-            try:
-                if path and os.path.isfile(path):
-                    os.unlink(path)
-            except OSError:
-                pass
+            self._safe_unlink(path)
             raise
 
         return path
@@ -141,7 +154,7 @@ class OcrService:
     def _ocr_image(self, image_path: str) -> str:
         reader = self._get_reader()
         results = reader.readtext(image_path)
-        return " ".join([r[1] for r in results]).strip()
+        return self._join_ocr_text(results)
 
     @staticmethod
     def _pdf_to_images(pdf_path: str) -> List[np.ndarray]:
@@ -164,7 +177,11 @@ class OcrService:
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
         reader = self._get_reader()
         results = reader.readtext(img_rgb)
-        return " ".join([r[1] for r in results]).strip()
+        return self._join_ocr_text(results)
+
+    @staticmethod
+    def _join_ocr_text(results: List[Any]) -> str:
+        return " ".join(str(r[1]) for r in results if len(r) > 1).strip()
 
     def _ensure_image_not_blurry(self, image_path: str, context: str = "Image") -> None:
         ok, var = self.validate_image_blur(image_path)
@@ -184,10 +201,7 @@ class OcrService:
             cv2.imwrite(first_path, images[0])
             self._ensure_image_not_blurry(first_path, context="First page image/PDF")
         finally:
-            try:
-                os.unlink(first_path)
-            except OSError:
-                pass
+            self._safe_unlink(first_path)
 
         texts = [self._ocr_image_array(img) for img in images]
         return "\n".join(texts).strip()
@@ -214,8 +228,7 @@ class OcrService:
 
     @staticmethod
     def _read_text_file(file_path: str) -> str:
-        encodings = ["utf-8", "utf-8-sig", "cp1258", "latin-1"]
-        for enc in encodings:
+        for enc in TEXT_FILE_ENCODINGS:
             try:
                 with open(file_path, "r", encoding=enc) as f:
                     return f.read().strip()
@@ -275,8 +288,7 @@ class OcrService:
             ) from e
         finally:
             try:
-                if os.path.isfile(txt_path):
-                    os.unlink(txt_path)
+                self._safe_unlink(txt_path)
                 os.rmdir(out_dir)
             except OSError:
                 pass
@@ -287,25 +299,21 @@ class OcrService:
         if content_type == "unsupported":
             display_type = file_type or "application/octet-stream"
             raise UnsupportedFileTypeError(
-                f"Unsupported file type: {display_type}. Supported types: image/*, application/pdf, text/plain, application/msword, application/vnd.openxmlformats-officedocument.wordprocessingml.document."
+                f"Unsupported file type: {display_type}. Supported types: {', '.join(SUPPORTED_OCR_TYPES)}."
             )
-        if content_type == "txt":
-            return self._read_text_file(file_path)
-        if content_type == "docx":
-            return self._extract_docx_text(file_path)
-        if content_type == "doc":
-            return self._extract_doc_text_via_soffice(file_path)
-        if content_type == "pdf":
-            return self._run_pdf_ocr(file_path)
-        return self._run_image_ocr(file_path)
+
+        handlers: dict[str, Callable[[str], str]] = {
+            "txt": self._read_text_file,
+            "docx": self._extract_docx_text,
+            "doc": self._extract_doc_text_via_soffice,
+            "pdf": self._run_pdf_ocr,
+            "image": self._run_image_ocr,
+        }
+        return handlers[content_type](file_path)
 
     @staticmethod
     def cleanup_temp(path: str) -> None:
-        try:
-            if path and os.path.isfile(path):
-                os.unlink(path)
-        except OSError:
-            pass
+        OcrService._safe_unlink(path)
 
 
 ocr_service = OcrService()

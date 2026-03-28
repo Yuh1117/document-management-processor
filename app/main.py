@@ -21,12 +21,18 @@ def search(
     req: SearchRequest,
     search_service: SearchService = Depends(get_search_service),
 ):
-    hits = search_service.search(
+    hits, total = search_service.search(
         query=req.query,
         owner_id=req.owner_id,
         folder_id=req.folder_id,
-        top_k=req.top_k,
+        page=req.page,
+        page_size=req.page_size,
         mode=req.mode,
     )
 
-    return SearchResponse(hits=hits)
+    return SearchResponse(
+        hits=hits,
+        total=total,
+        page=req.page,
+        page_size=req.page_size,
+    )

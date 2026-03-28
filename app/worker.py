@@ -55,7 +55,11 @@ class DocumentIndexer:
 
     @staticmethod
     def update_processing_status(
-        doc_id: int, status: str, score: int | None, error: str | None
+        doc_id: int,
+        status: str,
+        score: int | None,
+        error: str | None,
+        extracted_text: str | None = None,
     ) -> None:
         base = (BACKEND_BASE_URL or "").rstrip("/")
         url = f"{base}/api/internal/documents/{doc_id}/processing-status"
@@ -64,6 +68,8 @@ class DocumentIndexer:
             "ocrQualityScore": score,
             "processingError": error,
         }
+        if extracted_text is not None:
+            payload["extractedText"] = extracted_text
         try:
             resp = requests.patch(url, json=payload, timeout=10)
             if not resp.ok:
@@ -246,7 +252,9 @@ class DocumentIndexer:
                 ELASTICSEARCH_INDEX,
                 len(chunks),
             )
-            self.update_processing_status(doc_id, "COMPLETED", score, None)
+            self.update_processing_status(
+                doc_id, "COMPLETED", score, None, extracted_text=raw_text
+            )
             self._ack_message(ch, method)
         except Exception as e:
             logger.exception("Processing failed doc_id=%s", doc_id)
