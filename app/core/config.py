@@ -15,6 +15,15 @@ RABBITMQ_DOCUMENT_QUEUE = os.getenv("RABBITMQ_DOCUMENT_QUEUE")
 ELASTICSEARCH_HOST = os.getenv("ELASTICSEARCH_HOST")
 ELASTICSEARCH_INDEX = os.getenv("ELASTICSEARCH_INDEX")
 
+BASE_DIR = os.path.dirname(os.path.dirname(__file__))
+CONSTANTS_DIR = os.path.join(BASE_DIR, "constants")
+ES_MAPPINGS_DIR = os.path.join(CONSTANTS_DIR, "es_mappings")
+ES_QUERIES_DIR = os.path.join(CONSTANTS_DIR, "es_queries")
+DOCUMENTS_INDEX_MAPPING_FILE = os.path.join(ES_MAPPINGS_DIR, "documents_index.json")
+FULL_TEXT_QUERY_FILE = os.path.join(ES_QUERIES_DIR, "full_text.json")
+SEMANTIC_QUERY_FILE = os.path.join(ES_QUERIES_DIR, "semantic.json")
+HYBRID_QUERY_FILE = os.path.join(ES_QUERIES_DIR, "hybrid.json")
+
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL")
 
 AWS_S3_ACCESS_KEY = os.getenv("AWS_S3_ACCESS_KEY")
@@ -33,11 +42,6 @@ SENTENCE_TRANSFORMER_MODEL_NAME = os.getenv(
     "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
 )
 
-BASE_DIR = os.path.dirname(os.path.dirname(__file__))
-CONSTANTS_DIR = os.path.join(BASE_DIR, "constants")
-ES_MAPPINGS_DIR = os.path.join(CONSTANTS_DIR, "es_mappings")
-ES_QUERIES_DIR = os.path.join(CONSTANTS_DIR, "es_queries")
-DOCUMENTS_INDEX_MAPPING_FILE = os.path.join(ES_MAPPINGS_DIR, "documents_index.json")
-FULL_TEXT_QUERY_FILE = os.path.join(ES_QUERIES_DIR, "full_text.json")
-SEMANTIC_QUERY_FILE = os.path.join(ES_QUERIES_DIR, "semantic.json")
-HYBRID_QUERY_FILE = os.path.join(ES_QUERIES_DIR, "hybrid.json")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME")
+SUMMARIZE_PROMPT_VERSION = os.getenv("SUMMARIZE_PROMPT_VERSION")
