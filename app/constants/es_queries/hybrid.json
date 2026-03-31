@@ -1,0 +1,41 @@
+{
+  "from": 0,
+  "size": 10,
+  "collapse": {
+    "field": "document_id"
+  },
+  "aggs": {
+    "unique_document_count": {
+      "cardinality": {
+        "field": "document_id",
+        "precision_threshold": 40000
+      }
+    }
+  },
+  "knn": {
+    "field": "content_vector",
+    "query_vector": [],
+    "k": 10,
+    "num_candidates": 50,
+    "boost": 10.0,
+    "filter": {
+      "bool": {
+        "filter": []
+      }
+    }
+  },
+  "query": {
+    "bool": {
+      "should": [
+        {
+          "multi_match": {
+            "query": "",
+            "fields": ["name^3", "content^1"],
+            "type": "best_fields"
+          }
+        }
+      ],
+      "filter": []
+    }
+  }
+}
