@@ -1,8 +1,9 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class SummarizeRequest(BaseModel):
     text: str
+    language: str = Field(default="vi", description="Language code: vi, en, ...")
 
 
 class SummarizeResponse(BaseModel):
