@@ -1,0 +1,53 @@
+from __future__ import annotations
+
+import logging
+import unicodedata
+
+from app.core.config import OCR_MAX_INVALID_CHAR_RATIO, OCR_MIN_QUALITY_SCORE
+
+logger = logging.getLogger(__name__)
+
+
+class OcrMonitoringService:
+    def compute_detailed_metrics(self, text: str) -> dict:
+        total = len(text) if text else 0
+        words = text.split() if text else []
+        clean = sum(1 for c in text if c.isalnum() or c.isspace()) if text else 0
+        invalid = (
+            sum(
+                1
+                for c in text
+                if unicodedata.category(c).startswith("C")
+                and c not in ("\n", "\r", "\t")
+            )
+            if text
+            else 0
+        )
+
+        return {
+            "ocr_quality_score": int(clean / total * 100) if total else 0,
+            "invalid_char_ratio": round(invalid / total, 4) if total else 0.0,
+            "avg_word_length": round(sum(len(w) for w in words) / len(words), 2)
+            if words
+            else 0.0,
+            "total_chars": total,
+            "total_words": len(words),
+        }
+
+    def check_quality_alert(self, metrics: dict, doc_id: int) -> bool:
+        alerts = []
+        if metrics.get("ocr_quality_score", 0) < OCR_MIN_QUALITY_SCORE:
+            alerts.append(
+                f"quality_score={metrics['ocr_quality_score']} < {OCR_MIN_QUALITY_SCORE}"
+            )
+        if metrics.get("invalid_char_ratio", 0) > OCR_MAX_INVALID_CHAR_RATIO:
+            alerts.append(
+                f"invalid_chars={metrics['invalid_char_ratio']:.4f} > {OCR_MAX_INVALID_CHAR_RATIO}"
+            )
+
+        if alerts:
+            logger.warning("OCR quality alert doc_id=%s: %s", doc_id, "; ".join(alerts))
+        return bool(alerts)
+
+
+ocr_monitoring_service = OcrMonitoringService()

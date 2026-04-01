@@ -37,11 +37,28 @@ OCR_USE_GPU = _env_bool("OCR_USE_GPU", False)
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "250"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "50"))
 
+# Data validation
+MIN_IMAGE_WIDTH = int(os.getenv("MIN_IMAGE_WIDTH", "150"))
+MIN_IMAGE_HEIGHT = int(os.getenv("MIN_IMAGE_HEIGHT", "150"))
+MIN_CONTRAST_THRESHOLD = float(os.getenv("MIN_CONTRAST_THRESHOLD", "30.0"))
+VALIDATE_ALL_PDF_PAGES = _env_bool("VALIDATE_ALL_PDF_PAGES", True)
+
+# OCR monitoring
+OCR_MIN_QUALITY_SCORE = int(os.getenv("OCR_MIN_QUALITY_SCORE", "60"))
+OCR_MAX_INVALID_CHAR_RATIO = float(os.getenv("OCR_MAX_INVALID_CHAR_RATIO", "0.3"))
+
 SENTENCE_TRANSFORMER_MODEL_NAME = os.getenv(
     "SENTENCE_TRANSFORMER_MODEL_NAME",
     "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
 )
 
+# ES indexing retry
+ES_INDEX_MAX_RETRIES = int(os.getenv("ES_INDEX_MAX_RETRIES", "3"))
+ES_INDEX_RETRY_BASE_DELAY = float(os.getenv("ES_INDEX_RETRY_BASE_DELAY", "1.0"))
+
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME")
 SUMMARIZE_PROMPT_VERSION = os.getenv("SUMMARIZE_PROMPT_VERSION")
+
+# MLflow
+MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5001")

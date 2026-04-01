@@ -1,18 +1,34 @@
 import json
 import logging
-from typing import List
+import time
 import pika
 import requests
+from prometheus_client import start_http_server as start_metrics_server
+
 from app.core.config import (
     BACKEND_BASE_URL,
-    CHUNK_OVERLAP,
-    CHUNK_SIZE,
     ELASTICSEARCH_INDEX,
+    ES_INDEX_MAX_RETRIES,
     RABBITMQ_DOCUMENT_QUEUE,
     RABBITMQ_URL,
 )
 from app.core.es import es_client
+from app.core.metrics import (
+    DOCS_PROCESSED,
+    PROCESSING_DURATION,
+    QUALITY_SCORE,
+    VALIDATION_FAILURES,
+)
+from app.services.data_validation_service import (
+    DataValidationService,
+    data_validation_service,
+)
 from app.services.embedding_service import EmbeddingService, embedding_service
+from app.services.es_document_indexing import chunk_text, index_all_chunks
+from app.services.ocr_monitoring_service import (
+    OcrMonitoringService,
+    ocr_monitoring_service,
+)
 from app.services.ocr_service import (
     ImageTooBlurryError,
     OcrService,
@@ -24,9 +40,17 @@ logger = logging.getLogger(__name__)
 
 
 class DocumentIndexer:
-    def __init__(self, embedding: EmbeddingService, ocr: OcrService) -> None:
+    def __init__(
+        self,
+        embedding: EmbeddingService,
+        ocr: OcrService,
+        validation: DataValidationService | None = None,
+        monitoring: OcrMonitoringService | None = None,
+    ) -> None:
         self._embedding = embedding
         self._ocr = ocr
+        self._validation = validation or data_validation_service
+        self._monitoring = monitoring or ocr_monitoring_service
 
     @staticmethod
     def compute_ocr_score(text: str) -> int:
@@ -37,29 +61,14 @@ class DocumentIndexer:
         return int(clean / total * 100)
 
     @staticmethod
-    def chunk_text(
-        text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP
-    ) -> List[str]:
-        words = text.split()
-        if not words:
-            return []
-        chunks = []
-        i = 0
-        while i < len(words):
-            chunk_words = words[i : i + size]
-            chunks.append(" ".join(chunk_words))
-            if i + size >= len(words):
-                break
-            i += size - overlap
-        return chunks
-
-    @staticmethod
     def update_processing_status(
         doc_id: int,
         status: str,
         score: int | None,
         error: str | None,
         extracted_text: str | None = None,
+        validation_report: str | None = None,
+        ocr_metrics: str | None = None,
     ) -> None:
         base = (BACKEND_BASE_URL or "").rstrip("/")
         url = f"{base}/api/internal/documents/{doc_id}/processing-status"
@@ -70,6 +79,10 @@ class DocumentIndexer:
         }
         if extracted_text is not None:
             payload["extractedText"] = extracted_text
+        if validation_report is not None:
+            payload["validationReport"] = validation_report
+        if ocr_metrics is not None:
+            payload["ocrMetrics"] = ocr_metrics
         try:
             resp = requests.patch(url, json=payload, timeout=10)
             if not resp.ok:
@@ -135,52 +148,6 @@ class DocumentIndexer:
             )
             return None
 
-    def _build_doc_body(
-        self,
-        doc_id: int,
-        chunk_index: int,
-        chunk: str,
-        owner_id,
-        folder_id,
-        doc_name,
-    ) -> dict:
-        vector = self._embedding.encode_text(chunk)
-        doc_body = {
-            "chunk_id": f"{doc_id}_{chunk_index}",
-            "document_id": str(doc_id),
-            "owner_id": str(owner_id) if owner_id is not None else None,
-            "folder_id": str(folder_id) if folder_id is not None else None,
-            "content": chunk,
-            "content_vector": vector,
-        }
-        if doc_name is not None:
-            doc_body["name"] = doc_name
-        return doc_body
-
-    def _index_chunks(
-        self,
-        doc_id: int,
-        chunks: List[str],
-        owner_id,
-        folder_id,
-        doc_name,
-    ) -> None:
-        es = es_client.get_client()
-        for i, chunk in enumerate(chunks):
-            doc_body = self._build_doc_body(
-                doc_id=doc_id,
-                chunk_index=i,
-                chunk=chunk,
-                owner_id=owner_id,
-                folder_id=folder_id,
-                doc_name=doc_name,
-            )
-            es.index(
-                index=ELASTICSEARCH_INDEX,
-                id=f"{doc_id}_{i + 1}",
-                document=doc_body,
-            )
-
     def process_message(self, ch, method, properties, body):
         try:
             doc_id, file_url, msg = self._parse_message(body)
@@ -198,6 +165,7 @@ class DocumentIndexer:
         doc_name = msg.get("name")
 
         temp_path: str | None = None
+        t0 = time.monotonic()
 
         try:
             logger.info(
@@ -211,6 +179,26 @@ class DocumentIndexer:
             temp_path = self._ocr.download_to_temp(file_url, file_type)
             logger.debug("Downloaded to temp path=%s", temp_path)
 
+            validation_report = self._validation.validate(temp_path, file_type, doc_id)
+            report_json = validation_report.model_dump_json()
+            if not validation_report.overall_passed:
+                VALIDATION_FAILURES.inc()
+                DOCS_PROCESSED.labels(status="failed").inc()
+                failed_msgs = "; ".join(
+                    c.message or c.name
+                    for c in validation_report.checks
+                    if not c.passed
+                )
+                self.update_processing_status(
+                    doc_id,
+                    "FAILED",
+                    0,
+                    f"Data validation failed: {failed_msgs}",
+                    validation_report=report_json,
+                )
+                self._ack_message(ch, method)
+                return
+
             raw_text = self._extract_text_or_fail(
                 ch=ch,
                 method=method,
@@ -219,22 +207,29 @@ class DocumentIndexer:
                 file_type=file_type,
             )
             if raw_text is None:
+                DOCS_PROCESSED.labels(status="failed").inc()
                 return
 
             if not raw_text.strip():
                 logger.warning("OCR produced no text doc_id=%s", doc_id)
+                DOCS_PROCESSED.labels(status="failed").inc()
                 self.update_processing_status(
                     doc_id,
                     "FAILED",
                     0,
                     "Could not extract content (OCR produced no text)",
+                    validation_report=report_json,
                 )
                 self._ack_message(ch, method)
                 return
 
-            # Chunking + Embedding
-            score = self.compute_ocr_score(raw_text)
-            chunks = self.chunk_text(raw_text)
+            metrics = self._monitoring.compute_detailed_metrics(raw_text)
+            metrics_json = json.dumps(metrics)
+            self._monitoring.check_quality_alert(metrics, doc_id)
+            score = metrics.get("ocr_quality_score", self.compute_ocr_score(raw_text))
+            QUALITY_SCORE.observe(score)
+
+            chunks = chunk_text(raw_text)
             logger.info(
                 "OCR done doc_id=%s ocr_score=%s chunks=%s chars=%s",
                 doc_id,
@@ -243,24 +238,59 @@ class DocumentIndexer:
                 len(raw_text),
             )
 
-            self._index_chunks(doc_id, chunks, owner_id, folder_id, doc_name)
+            try:
+                es = es_client.get_client()
+                index_all_chunks(
+                    es,
+                    self._embedding,
+                    doc_id,
+                    chunks,
+                    owner_id,
+                    folder_id,
+                    doc_name,
+                    with_retry=True,
+                )
+            except Exception as idx_err:
+                logger.error(
+                    "ES indexing permanently failed doc_id=%s: %s", doc_id, idx_err
+                )
+                DOCS_PROCESSED.labels(status="index_failed").inc()
+                self.update_processing_status(
+                    doc_id,
+                    "INDEX_FAILED",
+                    score,
+                    f"Elasticsearch indexing failed after {ES_INDEX_MAX_RETRIES} retries: {idx_err}",
+                    extracted_text=raw_text,
+                    validation_report=report_json,
+                    ocr_metrics=metrics_json,
+                )
+                self._ack_message(ch, method)
+                return
 
-            # ACK
             logger.info(
                 "Indexed doc_id=%s into %s (%s chunks)",
                 doc_id,
                 ELASTICSEARCH_INDEX,
                 len(chunks),
             )
+            DOCS_PROCESSED.labels(status="completed").inc()
             self.update_processing_status(
-                doc_id, "COMPLETED", score, None, extracted_text=raw_text
+                doc_id,
+                "COMPLETED",
+                score,
+                None,
+                extracted_text=raw_text,
+                validation_report=report_json,
+                ocr_metrics=metrics_json,
             )
             self._ack_message(ch, method)
         except Exception as e:
             logger.exception("Processing failed doc_id=%s", doc_id)
+            DOCS_PROCESSED.labels(status="failed").inc()
             self.update_processing_status(doc_id, "FAILED", 0, str(e))
             self._ack_message(ch, method)
         finally:
+            PROCESSING_DURATION.observe(time.monotonic() - t0)
             if temp_path:
                 self._ocr.cleanup_temp(temp_path)
 
@@ -270,13 +300,19 @@ def main():
         level=logging.INFO,
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
     )
+
+    start_metrics_server(8001)
+    logger.info("Prometheus metrics server started on :8001")
+
     logger.info(
         "Worker starting queue=%s elasticsearch_index=%s",
         RABBITMQ_DOCUMENT_QUEUE,
         ELASTICSEARCH_INDEX,
     )
 
-    indexer = DocumentIndexer(embedding_service, ocr_service)
+    indexer = DocumentIndexer(
+        embedding_service, ocr_service, data_validation_service, ocr_monitoring_service
+    )
 
     params = pika.URLParameters(RABBITMQ_URL)
     connection = pika.BlockingConnection(params)
