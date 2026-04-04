@@ -173,7 +173,6 @@ class SearchService:
         es = es_client.get_client()
         filters = self._build_filters(owner_id, folder_id)
         body = self._build_search_body(query, page, page_size, filters, mode)
-        print(body)
         resp = es.search(index=ELASTICSEARCH_INDEX, body=body)
         return self._to_hits(resp), self._total_hits(resp)
 

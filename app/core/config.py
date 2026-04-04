@@ -52,10 +52,6 @@ SENTENCE_TRANSFORMER_MODEL_NAME = os.getenv(
     "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
 )
 
-# ES indexing retry
-ES_INDEX_MAX_RETRIES = int(os.getenv("ES_INDEX_MAX_RETRIES", "3"))
-ES_INDEX_RETRY_BASE_DELAY = float(os.getenv("ES_INDEX_RETRY_BASE_DELAY", "1.0"))
-
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME")
 SUMMARIZE_PROMPT_VERSION = os.getenv("SUMMARIZE_PROMPT_VERSION")
