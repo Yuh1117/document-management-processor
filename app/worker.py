@@ -23,7 +23,7 @@ from app.services.data_validation_service import (
     data_validation_service,
 )
 from app.services.embedding_service import EmbeddingService, embedding_service
-from app.services.es_document_indexing import (
+from app.utils.elasticsearch.indexing import (
     chunk_text,
     delete_all_chunks_for_document,
     index_all_chunks,

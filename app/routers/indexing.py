@@ -6,7 +6,7 @@ from app.core.es import es_client
 from app.deps import get_embedding_service
 from app.models.indexing import ReindexRequest, ReindexResponse
 from app.services.embedding_service import EmbeddingService
-from app.services.es_document_indexing import (
+from app.utils.elasticsearch.indexing import (
     chunk_text,
     delete_all_chunks_for_document,
     index_all_chunks,

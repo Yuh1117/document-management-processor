@@ -6,12 +6,11 @@ from pydantic import BaseModel, Field
 class SummarizeRequest(BaseModel):
     text: str
     language: str = Field(default="vi", description="Language code: vi, en, ...")
-    model_id: str | None = Field(default=None, description="Optional model ID from registry")
 
 
 class SummarizeResponse(BaseModel):
     summary_text: str
-    model_version: str
+    model_name: str
     prompt_version: str
 
 

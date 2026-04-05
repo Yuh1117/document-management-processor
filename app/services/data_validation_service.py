@@ -21,44 +21,44 @@ from app.services.ocr_service import OcrService
 logger = logging.getLogger(__name__)
 
 
-def _check_image(img: np.ndarray, label: str = "Image") -> list[ValidationCheck]:
-    checks: list[ValidationCheck] = []
-    h, w = img.shape[:2]
-
-    if w < MIN_IMAGE_WIDTH or h < MIN_IMAGE_HEIGHT:
-        checks.append(
-            ValidationCheck(
-                name="resolution",
-                passed=False,
-                message=f"{label} resolution too low ({w}x{h}), min {MIN_IMAGE_WIDTH}x{MIN_IMAGE_HEIGHT}",
-            )
-        )
-
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
-    blur_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
-    if blur_var < LAPLACIAN_VAR_THRESHOLD:
-        checks.append(
-            ValidationCheck(
-                name="blur",
-                passed=False,
-                message=f"{label} too blurry (variance={blur_var:.1f}, min={LAPLACIAN_VAR_THRESHOLD})",
-            )
-        )
-
-    contrast = float(np.std(gray))
-    if contrast < MIN_CONTRAST_THRESHOLD:
-        checks.append(
-            ValidationCheck(
-                name="contrast",
-                passed=False,
-                message=f"{label} contrast too low (std={contrast:.1f}, min={MIN_CONTRAST_THRESHOLD})",
-            )
-        )
-
-    return checks
-
-
 class DataValidationService:
+    @staticmethod
+    def _check_image(img: np.ndarray, label: str = "Image") -> list[ValidationCheck]:
+        checks: list[ValidationCheck] = []
+        h, w = img.shape[:2]
+
+        if w < MIN_IMAGE_WIDTH or h < MIN_IMAGE_HEIGHT:
+            checks.append(
+                ValidationCheck(
+                    name="resolution",
+                    passed=False,
+                    message=f"{label} resolution too low ({w}x{h}), min {MIN_IMAGE_WIDTH}x{MIN_IMAGE_HEIGHT}",
+                )
+            )
+
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
+        blur_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+        if blur_var < LAPLACIAN_VAR_THRESHOLD:
+            checks.append(
+                ValidationCheck(
+                    name="blur",
+                    passed=False,
+                    message=f"{label} too blurry (variance={blur_var:.1f}, min={LAPLACIAN_VAR_THRESHOLD})",
+                )
+            )
+
+        contrast = float(np.std(gray))
+        if contrast < MIN_CONTRAST_THRESHOLD:
+            checks.append(
+                ValidationCheck(
+                    name="contrast",
+                    passed=False,
+                    message=f"{label} contrast too low (std={contrast:.1f}, min={MIN_CONTRAST_THRESHOLD})",
+                )
+            )
+
+        return checks
+
     def _validate_image(self, path: str) -> list[ValidationCheck]:
         img = cv2.imread(path)
         if img is None:
@@ -67,7 +67,7 @@ class DataValidationService:
                     name="integrity", passed=False, message="Cannot read image file"
                 )
             ]
-        return _check_image(img)
+        return self._check_image(img)
 
     def _validate_pdf(self, path: str) -> list[ValidationCheck]:
         try:
@@ -98,7 +98,7 @@ class DataValidationService:
                 rgb.height, rgb.width, 3
             )
             img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-            checks.extend(_check_image(img_bgr, label=f"Page {i + 1}"))
+            checks.extend(self._check_image(img_bgr, label=f"Page {i + 1}"))
 
         doc.close()
         return checks
