@@ -20,9 +20,14 @@ from app.core.config import (
     AWS_S3_REGION,
     AWS_S3_SECRET_KEY,
     LAPLACIAN_VAR_THRESHOLD,
+    MIN_CONTRAST_THRESHOLD,
+    MIN_IMAGE_HEIGHT,
+    MIN_IMAGE_WIDTH,
     OCR_USE_GPU,
     TEMP_DIR,
+    VALIDATE_ALL_PDF_PAGES,
 )
+from app.models.validation import ValidationCheck, ValidationReport
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +60,18 @@ class UnsupportedFileTypeError(Exception):
 
 
 class OcrService:
+    _PDF_RASTER_MATRIX = fitz.Matrix(150 / 72, 150 / 72)
+
+    @staticmethod
+    def _pdf_page_to_bgr(doc: fitz.Document, page_index: int) -> np.ndarray:
+        pix = doc.load_page(page_index).get_pixmap(
+            matrix=OcrService._PDF_RASTER_MATRIX, alpha=False
+        )
+        rgb = fitz.Pixmap(fitz.csRGB, pix)
+        h, w = rgb.height, rgb.width
+        img = np.frombuffer(rgb.samples, dtype=np.uint8).reshape(h, w, 3)
+        return cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+
     def __init__(
         self,
         languages: list[str] | None = None,
@@ -158,20 +175,8 @@ class OcrService:
 
     @staticmethod
     def _pdf_to_images(pdf_path: str) -> List[np.ndarray]:
-        images: List[np.ndarray] = []
-        mat = fitz.Matrix(150 / 72, 150 / 72)
-
         with fitz.open(pdf_path) as doc:
-            for i in range(len(doc)):
-                page = doc.load_page(i)
-                pix = page.get_pixmap(matrix=mat, alpha=False)
-                rgb = fitz.Pixmap(fitz.csRGB, pix)
-                h, w = rgb.height, rgb.width
-                img = np.frombuffer(rgb.samples, dtype=np.uint8).reshape(h, w, 3)
-                img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-                images.append(img)
-
-        return images
+            return [OcrService._pdf_page_to_bgr(doc, i) for i in range(len(doc))]
 
     def _ocr_image_array(self, img_bgr: np.ndarray) -> str:
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
@@ -225,6 +230,135 @@ class OcrService:
         if ft.startswith("image/") or lower_path.endswith(IMAGE_EXTENSIONS):
             return "image"
         return "unsupported"
+
+    def _validation_check_image(
+        self, img: np.ndarray, label: str = "Image"
+    ) -> list[ValidationCheck]:
+        checks: list[ValidationCheck] = []
+        h, w = img.shape[:2]
+
+        if w < MIN_IMAGE_WIDTH or h < MIN_IMAGE_HEIGHT:
+            checks.append(
+                ValidationCheck(
+                    name="resolution",
+                    passed=False,
+                    message=f"{label} resolution too low ({w}x{h}), min {MIN_IMAGE_WIDTH}x{MIN_IMAGE_HEIGHT}",
+                )
+            )
+
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
+        blur_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+        if blur_var < self._blur_threshold:
+            checks.append(
+                ValidationCheck(
+                    name="blur",
+                    passed=False,
+                    message=f"{label} too blurry (variance={blur_var:.1f}, min={self._blur_threshold})",
+                )
+            )
+
+        contrast = float(np.std(gray))
+        if contrast < MIN_CONTRAST_THRESHOLD:
+            checks.append(
+                ValidationCheck(
+                    name="contrast",
+                    passed=False,
+                    message=f"{label} contrast too low (std={contrast:.1f}, min={MIN_CONTRAST_THRESHOLD})",
+                )
+            )
+
+        return checks
+
+    def _validate_image_file(self, path: str) -> list[ValidationCheck]:
+        img = cv2.imread(path)
+        if img is None:
+            return [
+                ValidationCheck(
+                    name="integrity", passed=False, message="Cannot read image file"
+                )
+            ]
+        return self._validation_check_image(img)
+
+    def _validate_pdf_file(self, path: str) -> list[ValidationCheck]:
+        try:
+            doc = fitz.open(path)
+        except Exception as e:
+            return [
+                ValidationCheck(
+                    name="integrity", passed=False, message=f"PDF corrupt: {e}"
+                )
+            ]
+
+        if doc.page_count == 0:
+            doc.close()
+            return [
+                ValidationCheck(
+                    name="integrity", passed=False, message="PDF has no pages"
+                )
+            ]
+
+        checks: list[ValidationCheck] = []
+        pages = range(len(doc)) if VALIDATE_ALL_PDF_PAGES else range(min(1, len(doc)))
+
+        for i in pages:
+            img_bgr = self._pdf_page_to_bgr(doc, i)
+            checks.extend(self._validation_check_image(img_bgr, label=f"Page {i + 1}"))
+
+        doc.close()
+        return checks
+
+    def _validate_docx_file(self, path: str) -> list[ValidationCheck]:
+        try:
+            Document(path)
+            return []
+        except Exception as e:
+            return [
+                ValidationCheck(
+                    name="integrity", passed=False, message=f"DOCX corrupt: {e}"
+                )
+            ]
+
+    @staticmethod
+    def _validate_text_like_file(path: str) -> list[ValidationCheck]:
+        if os.path.getsize(path) == 0:
+            return [
+                ValidationCheck(name="integrity", passed=False, message="File is empty")
+            ]
+        return []
+
+    def validate(self, file_path: str, file_type: str, doc_id: int) -> ValidationReport:
+        content_type = self._resolve_content_type(file_path, file_type)
+
+        handlers: dict[str, Callable[[str], list[ValidationCheck]]] = {
+            "image": self._validate_image_file,
+            "pdf": self._validate_pdf_file,
+            "docx": self._validate_docx_file,
+            "txt": self._validate_text_like_file,
+            "doc": self._validate_text_like_file,
+        }
+
+        if content_type == "unsupported":
+            checks = [
+                ValidationCheck(
+                    name="format", passed=False, message=f"Unsupported: {file_type}"
+                )
+            ]
+        elif content_type in handlers:
+            checks = handlers[content_type](file_path)
+        else:
+            checks = []
+
+        overall = len(checks) == 0 or all(c.passed for c in checks)
+        if not overall:
+            failed = [c.message or c.name for c in checks if not c.passed]
+            logger.warning("Validation FAILED doc_id=%s: %s", doc_id, "; ".join(failed))
+
+        return ValidationReport(
+            doc_id=doc_id,
+            file_type=file_type or "unknown",
+            checks=checks,
+            overall_passed=overall,
+        )
 
     @staticmethod
     def _read_text_file(file_path: str) -> str:
