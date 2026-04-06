@@ -12,24 +12,13 @@ class OcrMonitoringService:
     def compute_detailed_metrics(self, text: str) -> dict:
         total = len(text) if text else 0
         words = text.split() if text else []
-        clean = sum(1 for c in text if c.isalnum() or c.isspace()) if text else 0
-        invalid = (
-            sum(
-                1
-                for c in text
-                if unicodedata.category(c).startswith("C")
-                and c not in ("\n", "\r", "\t")
-            )
-            if text
-            else 0
-        )
+        clean = self._clean_char_count(text)
+        invalid = self._invalid_control_char_count(text)
 
         return {
             "ocr_quality_score": int(clean / total * 100) if total else 0,
             "invalid_char_ratio": round(invalid / total, 4) if total else 0.0,
-            "avg_word_length": round(sum(len(w) for w in words) / len(words), 2)
-            if words
-            else 0.0,
+            "avg_word_length": self._avg_word_length(words),
             "total_chars": total,
             "total_words": len(words),
         }
@@ -48,6 +37,26 @@ class OcrMonitoringService:
         if alerts:
             logger.warning("OCR quality alert doc_id=%s: %s", doc_id, "; ".join(alerts))
         return bool(alerts)
+
+    @staticmethod
+    def _clean_char_count(text: str) -> int:
+        return sum(1 for c in text if c.isalnum() or c.isspace()) if text else 0
+
+    @staticmethod
+    def _invalid_control_char_count(text: str) -> int:
+        if not text:
+            return 0
+        return sum(
+            1
+            for c in text
+            if unicodedata.category(c).startswith("C") and c not in ("\n", "\r", "\t")
+        )
+
+    @staticmethod
+    def _avg_word_length(words: list[str]) -> float:
+        if not words:
+            return 0.0
+        return round(sum(len(w) for w in words) / len(words), 2)
 
 
 ocr_monitoring_service = OcrMonitoringService()

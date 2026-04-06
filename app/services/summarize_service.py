@@ -34,19 +34,6 @@ class SummarizeService:
         self._client = genai.Client(api_key=GEMINI_API_KEY)
         self._mlflow_model = self._load_mlflow_model()
 
-    def _load_mlflow_model(self):
-        try:
-            model = mlflow.pyfunc.load_model(MLFLOW_SUMMARIZE_MODEL_URI)
-            logger.info("Loaded MLflow model from %s", MLFLOW_SUMMARIZE_MODEL_URI)
-            return model
-        except Exception as e:
-            logger.warning(
-                "Could not load MLflow model (%s), using direct Gemini call: %s",
-                MLFLOW_SUMMARIZE_MODEL_URI,
-                e,
-            )
-            return None
-
     def list_models(self) -> list[dict]:
         return AVAILABLE_MODELS
 
@@ -68,6 +55,19 @@ class SummarizeService:
             "model_name": model_name,
             "prompt_version": prompt_version,
         }
+
+    def _load_mlflow_model(self):
+        try:
+            model = mlflow.pyfunc.load_model(MLFLOW_SUMMARIZE_MODEL_URI)
+            logger.info("Loaded MLflow model from %s", MLFLOW_SUMMARIZE_MODEL_URI)
+            return model
+        except Exception as e:
+            logger.warning(
+                "Could not load MLflow model (%s), using direct Gemini call: %s",
+                MLFLOW_SUMMARIZE_MODEL_URI,
+                e,
+            )
+            return None
 
     def _predict_via_mlflow(self, text: str, language: str) -> str:
         input_df = pd.DataFrame([{"text": text, "language": language}])

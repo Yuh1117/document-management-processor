@@ -18,10 +18,6 @@ from app.core.metrics import (
     QUALITY_SCORE,
     VALIDATION_FAILURES,
 )
-from app.services.data_validation_service import (
-    DataValidationService,
-    data_validation_service,
-)
 from app.services.embedding_service import EmbeddingService, embedding_service
 from app.utils.elasticsearch.indexing import (
     chunk_text,
@@ -47,109 +43,11 @@ class DocumentIndexer:
         self,
         embedding: EmbeddingService,
         ocr: OcrService,
-        validation: DataValidationService | None = None,
         monitoring: OcrMonitoringService | None = None,
     ) -> None:
         self._embedding = embedding
         self._ocr = ocr
-        self._validation = validation or data_validation_service
         self._monitoring = monitoring or ocr_monitoring_service
-
-    @staticmethod
-    def compute_ocr_score(text: str) -> int:
-        if not text:
-            return 0
-        total = len(text)
-        clean = sum(1 for c in text if c.isalnum() or c.isspace())
-        return int(clean / total * 100)
-
-    @staticmethod
-    def update_processing_status(
-        doc_id: int,
-        status: str,
-        score: int | None,
-        error: str | None,
-        extracted_text: str | None = None,
-        validation_report: str | None = None,
-        ocr_metrics: str | None = None,
-    ) -> None:
-        base = (BACKEND_BASE_URL or "").rstrip("/")
-        url = f"{base}/api/internal/documents/{doc_id}/processing-status"
-        payload = {
-            "processingStatus": status,
-            "ocrQualityScore": score,
-            "processingError": error,
-        }
-        if extracted_text is not None:
-            payload["extractedText"] = extracted_text
-        if validation_report is not None:
-            payload["validationReport"] = validation_report
-        if ocr_metrics is not None:
-            payload["ocrMetrics"] = ocr_metrics
-        try:
-            resp = requests.patch(url, json=payload, timeout=10)
-            if not resp.ok:
-                logger.warning(
-                    "processing-status PATCH failed for doc_id=%s status=%s http=%s body=%s",
-                    doc_id,
-                    status,
-                    resp.status_code,
-                    (resp.text or "")[:500],
-                )
-        except Exception as e:
-            logger.warning(
-                "processing-status PATCH error for doc_id=%s status=%s: %s",
-                doc_id,
-                status,
-                e,
-            )
-
-    @staticmethod
-    def _ack_message(ch, method) -> None:
-        ch.basic_ack(delivery_tag=method.delivery_tag)
-
-    @staticmethod
-    def _decode_message_body(body) -> dict:
-        raw = bytes(body) if isinstance(body, memoryview) else body
-        text = raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else raw
-        return json.loads(text)
-
-    def _parse_message(self, body) -> tuple[int, str, dict]:
-        msg = self._decode_message_body(body)
-        doc_id = msg["doc_id"]
-        file_url = msg["file_url"]
-        return doc_id, file_url, msg
-
-    def _handle_ocr_failure(
-        self, ch, method, doc_id: int, message: str, log_msg: str
-    ) -> None:
-        logger.warning(log_msg, doc_id, message)
-        self.update_processing_status(doc_id, "FAILED", 0, message)
-        self._ack_message(ch, method)
-
-    def _extract_text_or_fail(
-        self, ch, method, doc_id: int, temp_path: str, file_type: str
-    ):
-        try:
-            return self._ocr.run_ocr(temp_path, file_type)
-        except ImageTooBlurryError as e:
-            self._handle_ocr_failure(
-                ch,
-                method,
-                doc_id,
-                str(e),
-                "OCR rejected blurry image doc_id=%s: %s",
-            )
-            return None
-        except UnsupportedFileTypeError as e:
-            self._handle_ocr_failure(
-                ch,
-                method,
-                doc_id,
-                str(e),
-                "OCR rejected unsupported type doc_id=%s: %s",
-            )
-            return None
 
     def process_message(self, ch, method, properties, body):
         """RabbitMQ callback: download → validate → OCR → metrics → ES index → backend status."""
@@ -187,7 +85,7 @@ class DocumentIndexer:
             logger.debug("Downloaded to temp path=%s", temp_path)
 
             # Pre-OCR validation (image/PDF checks); fail fast with validation report.
-            validation_report = self._validation.validate(temp_path, file_type, doc_id)
+            validation_report = self._ocr.validate(temp_path, file_type, doc_id)
             report_json = validation_report.model_dump_json()
             if not validation_report.overall_passed:
                 VALIDATION_FAILURES.inc()
@@ -237,7 +135,7 @@ class DocumentIndexer:
             metrics = self._monitoring.compute_detailed_metrics(raw_text)
             metrics_json = json.dumps(metrics)
             self._monitoring.check_quality_alert(metrics, doc_id)
-            score = metrics.get("ocr_quality_score", self.compute_ocr_score(raw_text))
+            score = metrics["ocr_quality_score"]
             QUALITY_SCORE.observe(score)
 
             # Chunk text for embedding + Elasticsearch indexing.
@@ -311,6 +209,94 @@ class DocumentIndexer:
             if temp_path:
                 self._ocr.cleanup_temp(temp_path)
 
+    @staticmethod
+    def update_processing_status(
+        doc_id: int,
+        status: str,
+        score: int | None,
+        error: str | None,
+        extracted_text: str | None = None,
+        validation_report: str | None = None,
+        ocr_metrics: str | None = None,
+    ) -> None:
+        base = (BACKEND_BASE_URL or "").rstrip("/")
+        url = f"{base}/api/internal/documents/{doc_id}/processing-status"
+        payload = {
+            "processingStatus": status,
+            "ocrQualityScore": score,
+            "processingError": error,
+        }
+        if extracted_text is not None:
+            payload["extractedText"] = extracted_text
+        if validation_report is not None:
+            payload["validationReport"] = validation_report
+        if ocr_metrics is not None:
+            payload["ocrMetrics"] = ocr_metrics
+        try:
+            resp = requests.patch(url, json=payload, timeout=10)
+            if not resp.ok:
+                logger.warning(
+                    "processing-status PATCH failed for doc_id=%s status=%s http=%s body=%s",
+                    doc_id,
+                    status,
+                    resp.status_code,
+                    (resp.text or "")[:500],
+                )
+        except Exception as e:
+            logger.warning(
+                "processing-status PATCH error for doc_id=%s status=%s: %s",
+                doc_id,
+                status,
+                e,
+            )
+
+    def _extract_text_or_fail(
+        self, ch, method, doc_id: int, temp_path: str, file_type: str
+    ):
+        try:
+            return self._ocr.run_ocr(temp_path, file_type)
+        except ImageTooBlurryError as e:
+            self._handle_ocr_failure(
+                ch,
+                method,
+                doc_id,
+                str(e),
+                "OCR rejected blurry image doc_id=%s: %s",
+            )
+            return None
+        except UnsupportedFileTypeError as e:
+            self._handle_ocr_failure(
+                ch,
+                method,
+                doc_id,
+                str(e),
+                "OCR rejected unsupported type doc_id=%s: %s",
+            )
+            return None
+
+    def _handle_ocr_failure(
+        self, ch, method, doc_id: int, message: str, log_msg: str
+    ) -> None:
+        logger.warning(log_msg, doc_id, message)
+        self.update_processing_status(doc_id, "FAILED", 0, message)
+        self._ack_message(ch, method)
+
+    def _parse_message(self, body) -> tuple[int, str, dict]:
+        msg = self._decode_message_body(body)
+        doc_id = msg["doc_id"]
+        file_url = msg["file_url"]
+        return doc_id, file_url, msg
+
+    @staticmethod
+    def _decode_message_body(body) -> dict:
+        raw = bytes(body) if isinstance(body, memoryview) else body
+        text = raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else raw
+        return json.loads(text)
+
+    @staticmethod
+    def _ack_message(ch, method) -> None:
+        ch.basic_ack(delivery_tag=method.delivery_tag)
+
 
 def main():
     start_metrics_server(8001)
@@ -322,9 +308,7 @@ def main():
         ELASTICSEARCH_INDEX,
     )
 
-    indexer = DocumentIndexer(
-        embedding_service, ocr_service, data_validation_service, ocr_monitoring_service
-    )
+    indexer = DocumentIndexer(embedding_service, ocr_service, ocr_monitoring_service)
 
     params = pika.URLParameters(RABBITMQ_URL)
     connection = pika.BlockingConnection(params)
