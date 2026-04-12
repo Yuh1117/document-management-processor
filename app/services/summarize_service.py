@@ -1,5 +1,6 @@
 import logging
 import mlflow
+from fastapi import HTTPException
 import mlflow.pyfunc
 import pandas as pd
 from google import genai
@@ -38,13 +39,20 @@ class SummarizeService:
         return AVAILABLE_MODELS
 
     def summarize(self, text: str, language: str = DEFAULT_LANG) -> dict:
+        if not text or not text.strip():
+            raise HTTPException(status_code=400, detail="Text must not be empty")
+
         model_name = GEMINI_MODEL_NAME
         prompt_version = SUMMARIZE_PROMPT_VERSION
 
-        if self._mlflow_model is not None:
-            summary_text = self._predict_via_mlflow(text, language)
-        else:
-            summary_text = self._predict_direct(text, language, model_name)
+        try:
+            if self._mlflow_model is not None:
+                summary_text = self._predict_via_mlflow(text, language)
+            else:
+                summary_text = self._predict_direct(text, language, model_name)
+        except Exception as e:
+            logger.error("Summarization failed: %s", e)
+            raise HTTPException(status_code=502, detail=f"Gemini API error: {str(e)}")
 
         self._log_to_mlflow(
             model_name, prompt_version, language, len(text), len(summary_text)

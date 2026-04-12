@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
 from app.deps import get_summarize_service
 from app.models.summarize import (
@@ -17,13 +17,8 @@ def summarize(
     req: SummarizeRequest,
     svc: SummarizeService = Depends(get_summarize_service),
 ):
-    if not req.text or not req.text.strip():
-        raise HTTPException(status_code=400, detail="Text must not be empty")
-    try:
-        result = svc.summarize(req.text, req.language)
-        return SummarizeResponse(**result)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Gemini API error: {str(e)}")
+    result = svc.summarize(req.text, req.language)
+    return SummarizeResponse(**result)
 
 
 @router.get("/models", response_model=ModelsListResponse)
