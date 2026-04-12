@@ -1,5 +1,7 @@
+import logging
 import json
 from typing import Any, Dict, List, Tuple
+from fastapi import HTTPException
 from app.core.config import (
     ELASTICSEARCH_INDEX,
     FULL_TEXT_QUERY_FILE,
@@ -9,6 +11,8 @@ from app.core.config import (
 from app.core.es import es_client
 from app.models.search import SearchMode, SearchHit
 from app.services.embedding_service import EmbeddingService, embedding_service
+
+logger = logging.getLogger(__name__)
 
 
 class SearchService:
@@ -24,11 +28,15 @@ class SearchService:
         page_size: int = 10,
         mode: SearchMode = SearchMode.SEMANTIC,
     ) -> Tuple[List[SearchHit], int]:
-        es = es_client.get_client()
-        filters = self._build_filters(owner_id, folder_id)
-        body = self._build_search_body(query, page, page_size, filters, mode)
-        resp = es.search(index=ELASTICSEARCH_INDEX, body=body)
-        return self._to_hits(resp), self._total_hits(resp)
+        try:
+            es = es_client.get_client()
+            filters = self._build_filters(owner_id, folder_id)
+            body = self._build_search_body(query, page, page_size, filters, mode)
+            resp = es.search(index=ELASTICSEARCH_INDEX, body=body)
+            return self._to_hits(resp), self._total_hits(resp)
+        except Exception as e:
+            logger.error("Search failed: %s", e)
+            raise HTTPException(status_code=502, detail=f"Elasticsearch error: {str(e)}")
 
     @staticmethod
     def _build_filters(owner_id: int | None, folder_id: int | None) -> list[dict]:
