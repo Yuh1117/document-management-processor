@@ -2,13 +2,12 @@ import json
 import logging
 import time
 import pika
-import requests
 from prometheus_client import start_http_server as start_metrics_server
 
 from app.core.config import (
-    BACKEND_BASE_URL,
     ELASTICSEARCH_INDEX,
     RABBITMQ_DOCUMENT_QUEUE,
+    RABBITMQ_PROCESSING_RESULT_QUEUE,
     RABBITMQ_URL,
 )
 from app.core.es import es_client
@@ -78,7 +77,7 @@ class DocumentIndexer:
                 file_type,
                 doc_name,
             )
-            self.update_processing_status(doc_id, "PROCESSING")
+            self.update_processing_status(ch, doc_id, "PROCESSING")
 
             # Fetch file from URL into a temp path for OCR.
             temp_path = self._ocr.download_to_temp(file_url, file_type)
@@ -100,6 +99,7 @@ class DocumentIndexer:
                     "checks": failed_checks,
                 })
                 self.update_processing_status(
+                    ch,
                     doc_id,
                     "FAILED",
                     processing_report=processing_report,
@@ -124,6 +124,7 @@ class DocumentIndexer:
                 logger.warning("OCR produced no text doc_id=%s", doc_id)
                 DOCS_PROCESSED.labels(status="failed").inc()
                 self.update_processing_status(
+                    ch,
                     doc_id,
                     "FAILED",
                     processing_report=json.dumps({"message": "Could not extract content (OCR produced no text)"}),
@@ -168,6 +169,7 @@ class DocumentIndexer:
                 )
                 DOCS_PROCESSED.labels(status="index_failed").inc()
                 self.update_processing_status(
+                    ch,
                     doc_id,
                     "FAILED",
                     processing_report=json.dumps({"message": f"Elasticsearch indexing failed: {idx_err}"}),
@@ -186,6 +188,7 @@ class DocumentIndexer:
             )
             DOCS_PROCESSED.labels(status="completed").inc()
             self.update_processing_status(
+                ch,
                 doc_id,
                 "COMPLETED",
                 extracted_text=raw_text,
@@ -197,6 +200,7 @@ class DocumentIndexer:
             logger.exception("Processing failed doc_id=%s", doc_id)
             DOCS_PROCESSED.labels(status="failed").inc()
             self.update_processing_status(
+                ch,
                 doc_id,
                 "FAILED",
                 processing_report=json.dumps({"message": str(e)}),
@@ -210,15 +214,14 @@ class DocumentIndexer:
 
     @staticmethod
     def update_processing_status(
+        ch,
         doc_id: int,
         status: str,
         processing_report: str | None = None,
         extracted_text: str | None = None,
         ocr_metrics: str | None = None,
     ) -> None:
-        base = (BACKEND_BASE_URL or "").rstrip("/")
-        url = f"{base}/api/internal/documents/{doc_id}/processing-status"
-        payload = {"processingStatus": status}
+        payload = {"documentId": doc_id, "processingStatus": status}
         if processing_report is not None:
             payload["processingReport"] = processing_report
         if extracted_text is not None:
@@ -226,18 +229,18 @@ class DocumentIndexer:
         if ocr_metrics is not None:
             payload["ocrMetrics"] = ocr_metrics
         try:
-            resp = requests.patch(url, json=payload, timeout=10)
-            if not resp.ok:
-                logger.warning(
-                    "processing-status PATCH failed for doc_id=%s status=%s http=%s body=%s",
-                    doc_id,
-                    status,
-                    resp.status_code,
-                    (resp.text or "")[:500],
-                )
+            ch.basic_publish(
+                exchange="",
+                routing_key=RABBITMQ_PROCESSING_RESULT_QUEUE,
+                body=json.dumps(payload),
+                properties=pika.BasicProperties(
+                    delivery_mode=2,
+                    content_type="application/json",
+                ),
+            )
         except Exception as e:
             logger.warning(
-                "processing-status PATCH error for doc_id=%s status=%s: %s",
+                "processing-status publish failed for doc_id=%s status=%s: %s",
                 doc_id,
                 status,
                 e,
@@ -272,7 +275,7 @@ class DocumentIndexer:
     ) -> None:
         logger.warning(log_msg, doc_id, message)
         self.update_processing_status(
-            doc_id, "FAILED", processing_report=json.dumps({"message": message})
+            ch, doc_id, "FAILED", processing_report=json.dumps({"message": message})
         )
         self._ack_message(ch, method)
 
@@ -309,6 +312,7 @@ def main():
     connection = pika.BlockingConnection(params)
     channel = connection.channel()
     channel.queue_declare(queue=RABBITMQ_DOCUMENT_QUEUE, durable=True)
+    channel.queue_declare(queue=RABBITMQ_PROCESSING_RESULT_QUEUE, durable=True)
     channel.basic_qos(prefetch_count=1)
     channel.basic_consume(
         queue=RABBITMQ_DOCUMENT_QUEUE, on_message_callback=indexer.process_message
