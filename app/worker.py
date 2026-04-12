@@ -78,29 +78,31 @@ class DocumentIndexer:
                 file_type,
                 doc_name,
             )
-            self.update_processing_status(doc_id, "PROCESSING", None, None)
+            self.update_processing_status(doc_id, "PROCESSING")
 
             # Fetch file from URL into a temp path for OCR.
             temp_path = self._ocr.download_to_temp(file_url, file_type)
             logger.debug("Downloaded to temp path=%s", temp_path)
 
             # Pre-OCR validation (image/PDF checks); fail fast with validation report.
-            validation_report = self._ocr.validate(temp_path, file_type, doc_id)
-            report_json = validation_report.model_dump_json()
-            if not validation_report.overall_passed:
+            validation_result = self._ocr.validate(temp_path, file_type, doc_id)
+            if not validation_result.overall_passed:
                 VALIDATION_FAILURES.inc()
                 DOCS_PROCESSED.labels(status="failed").inc()
-                failed_msgs = "; ".join(
-                    c.message or c.name
-                    for c in validation_report.checks
+                failed_checks = [
+                    {"name": c.name, "passed": False, "message": c.message}
+                    for c in validation_result.checks
                     if not c.passed
-                )
+                ]
+                failed_summary = "; ".join(c["message"] or c["name"] for c in failed_checks)
+                processing_report = json.dumps({
+                    "message": f"Data validation failed: {failed_summary}",
+                    "checks": failed_checks,
+                })
                 self.update_processing_status(
                     doc_id,
                     "FAILED",
-                    0,
-                    f"Data validation failed: {failed_msgs}",
-                    validation_report=report_json,
+                    processing_report=processing_report,
                 )
                 self._ack_message(ch, method)
                 return
@@ -124,9 +126,7 @@ class DocumentIndexer:
                 self.update_processing_status(
                     doc_id,
                     "FAILED",
-                    0,
-                    "Could not extract content (OCR produced no text)",
-                    validation_report=report_json,
+                    processing_report=json.dumps({"message": "Could not extract content (OCR produced no text)"}),
                 )
                 self._ack_message(ch, method)
                 return
@@ -170,10 +170,8 @@ class DocumentIndexer:
                 self.update_processing_status(
                     doc_id,
                     "FAILED",
-                    score,
-                    f"Elasticsearch indexing failed: {idx_err}",
+                    processing_report=json.dumps({"message": f"Elasticsearch indexing failed: {idx_err}"}),
                     extracted_text=raw_text,
-                    validation_report=report_json,
                     ocr_metrics=metrics_json,
                 )
                 self._ack_message(ch, method)
@@ -190,10 +188,7 @@ class DocumentIndexer:
             self.update_processing_status(
                 doc_id,
                 "COMPLETED",
-                score,
-                None,
                 extracted_text=raw_text,
-                validation_report=report_json,
                 ocr_metrics=metrics_json,
             )
             self._ack_message(ch, method)
@@ -201,7 +196,11 @@ class DocumentIndexer:
             # Unexpected errors anywhere above (download, validation bug, etc.).
             logger.exception("Processing failed doc_id=%s", doc_id)
             DOCS_PROCESSED.labels(status="failed").inc()
-            self.update_processing_status(doc_id, "FAILED", 0, str(e))
+            self.update_processing_status(
+                doc_id,
+                "FAILED",
+                processing_report=json.dumps({"message": str(e)}),
+            )
             self._ack_message(ch, method)
         finally:
             # Observe wall-clock duration for this message; always delete temp file.
@@ -213,23 +212,17 @@ class DocumentIndexer:
     def update_processing_status(
         doc_id: int,
         status: str,
-        score: int | None,
-        error: str | None,
+        processing_report: str | None = None,
         extracted_text: str | None = None,
-        validation_report: str | None = None,
         ocr_metrics: str | None = None,
     ) -> None:
         base = (BACKEND_BASE_URL or "").rstrip("/")
         url = f"{base}/api/internal/documents/{doc_id}/processing-status"
-        payload = {
-            "processingStatus": status,
-            "ocrQualityScore": score,
-            "processingError": error,
-        }
+        payload = {"processingStatus": status}
+        if processing_report is not None:
+            payload["processingReport"] = processing_report
         if extracted_text is not None:
             payload["extractedText"] = extracted_text
-        if validation_report is not None:
-            payload["validationReport"] = validation_report
         if ocr_metrics is not None:
             payload["ocrMetrics"] = ocr_metrics
         try:
@@ -278,7 +271,9 @@ class DocumentIndexer:
         self, ch, method, doc_id: int, message: str, log_msg: str
     ) -> None:
         logger.warning(log_msg, doc_id, message)
-        self.update_processing_status(doc_id, "FAILED", 0, message)
+        self.update_processing_status(
+            doc_id, "FAILED", processing_report=json.dumps({"message": message})
+        )
         self._ack_message(ch, method)
 
     def _parse_message(self, body) -> tuple[int, str, dict]:

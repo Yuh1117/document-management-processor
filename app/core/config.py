@@ -40,7 +40,7 @@ CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "50"))
 # Data validation
 MIN_IMAGE_WIDTH = int(os.getenv("MIN_IMAGE_WIDTH", "150"))
 MIN_IMAGE_HEIGHT = int(os.getenv("MIN_IMAGE_HEIGHT", "150"))
-MIN_CONTRAST_THRESHOLD = float(os.getenv("MIN_CONTRAST_THRESHOLD", "30.0"))
+MIN_CONTRAST_THRESHOLD = float(os.getenv("MIN_CONTRAST_THRESHOLD", "15.0"))
 VALIDATE_ALL_PDF_PAGES = _env_bool("VALIDATE_ALL_PDF_PAGES", True)
 
 # OCR monitoring
