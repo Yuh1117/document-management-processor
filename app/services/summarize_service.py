@@ -27,10 +27,10 @@ mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
 
 class SummarizeService:
     def __init__(self) -> None:
-        self._client = genai.Client(api_key=GEMINI_API_KEY)
-        self._mlflow_model = self._load_mlflow_model()
-        self._prompt_version = SUMMARIZE_PROMPT_VERSION
-        self._lock = threading.Lock()
+        self.client = genai.Client(api_key=GEMINI_API_KEY)
+        self.mlflow_model = self.load_mlflow_model()
+        self.prompt_version = SUMMARIZE_PROMPT_VERSION
+        self.lock = threading.Lock()
 
     def list_models(self) -> list:
         client = mlflow.MlflowClient()
@@ -43,9 +43,9 @@ class SummarizeService:
             versions = []
 
         active_version = None
-        if self._mlflow_model is not None:
+        if self.mlflow_model is not None:
             try:
-                active_version = self._mlflow_model.metadata.model_uuid
+                active_version = self.mlflow_model.metadata.model_uuid
             except Exception:
                 pass
 
@@ -59,7 +59,7 @@ class SummarizeService:
                 pass
 
             is_active = active_version is not None and mv.run_id == getattr(
-                self._mlflow_model.metadata, "run_id", None
+                self.mlflow_model.metadata, "run_id", None
             )
 
             models.append(
@@ -76,15 +76,15 @@ class SummarizeService:
         return models
 
     def reload_model(self) -> dict:
-        with self._lock:
-            old_model_name = self._model_name
-            self._mlflow_model = self._load_mlflow_model()
-            logger.info("Model reloaded: %s -> %s", old_model_name, self._model_name)
+        with self.lock:
+            old_model_name = self.model_name
+            self.mlflow_model = self.load_mlflow_model()
+            logger.info("Model reloaded: %s -> %s", old_model_name, self.model_name)
             return {
                 "previous_model": old_model_name,
-                "current_model": self._model_name,
+                "current_model": self.model_name,
                 "mlflow_model_uri": MLFLOW_SUMMARIZE_MODEL_URI,
-                "status": "loaded" if self._mlflow_model is not None else "fallback",
+                "status": "loaded" if self.mlflow_model is not None else "fallback",
             }
 
     def summarize(self, text: str, language: str = DEFAULT_LANG) -> dict:
@@ -92,17 +92,17 @@ class SummarizeService:
             raise HTTPException(status_code=400, detail="Text must not be empty")
 
         try:
-            if self._mlflow_model is not None:
-                summary_text = self._predict_via_mlflow(text, language)
+            if self.mlflow_model is not None:
+                summary_text = self.predict_via_mlflow(text, language)
             else:
-                summary_text = self._predict_direct(text, language)
+                summary_text = self.predict_direct(text, language)
         except Exception as e:
             logger.error("Summarization failed: %s", e)
             raise HTTPException(status_code=502, detail=f"Gemini API error: {str(e)}")
 
-        self._log_to_mlflow(
-            self._model_name,
-            self._prompt_version,
+        self.log_to_mlflow(
+            self.model_name,
+            self.prompt_version,
             language,
             len(text),
             len(summary_text),
@@ -110,19 +110,19 @@ class SummarizeService:
 
         return {
             "summary_text": summary_text,
-            "model_name": self._model_name,
-            "prompt_version": self._prompt_version,
+            "model_name": self.model_name,
+            "prompt_version": self.prompt_version,
         }
 
-    def _load_mlflow_model(self):
+    def load_mlflow_model(self):
         try:
             model = mlflow.pyfunc.load_model(MLFLOW_SUMMARIZE_MODEL_URI)
             metadata = model.metadata.metadata or {}
-            self._model_name = metadata.get("model_name")
-            logger.info("Loaded MLflow model: %s (prompt %s)", self._model_name)
+            self.model_name = metadata.get("model_name")
+            logger.info("Loaded MLflow model: %s (prompt %s)", self.model_name)
             return model
         except Exception as e:
-            self._model_name = GEMINI_MODEL_NAME
+            self.model_name = GEMINI_MODEL_NAME
             logger.warning(
                 "Could not load MLflow model (%s), falling back to config: %s",
                 MLFLOW_SUMMARIZE_MODEL_URI,
@@ -130,22 +130,22 @@ class SummarizeService:
             )
             return None
 
-    def _predict_via_mlflow(self, text: str, language: str) -> str:
+    def predict_via_mlflow(self, text: str, language: str) -> str:
         input_df = pd.DataFrame([{"text": text, "language": language}])
-        return self._mlflow_model.predict(input_df)
+        return self.mlflow_model.predict(input_df)
 
-    def _predict_direct(self, text: str, language: str) -> str:
+    def predict_direct(self, text: str, language: str) -> str:
         template = PROMPTS.get(language, PROMPTS[DEFAULT_LANG])
         prompt = template.format(text=text)
 
-        logger.info("Summarizing (direct) with model=%s", self._model_name)
-        response = self._client.models.generate_content(
-            model=self._model_name, contents=prompt
+        logger.info("Summarizing (direct) with model=%s", self.model_name)
+        response = self.client.models.generate_content(
+            model=self.model_name, contents=prompt
         )
         return response.text
 
     @staticmethod
-    def _log_to_mlflow(
+    def log_to_mlflow(
         model_name: str,
         prompt_version: str,
         language: str,

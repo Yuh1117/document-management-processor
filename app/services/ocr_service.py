@@ -31,7 +31,7 @@ from app.models.validation import ValidationCheck, ValidationReport
 
 logger = logging.getLogger(__name__)
 
-_S3_URI = re.compile(r"^s3://([^/]+)/(.+)$")
+S3_URI = re.compile(r"^s3://([^/]+)/(.+)$")
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 DOC_MIME = "application/msword"
 TXT_MIME = "text/plain"
@@ -60,12 +60,12 @@ class UnsupportedFileTypeError(Exception):
 
 
 class OcrService:
-    _PDF_RASTER_MATRIX = fitz.Matrix(150 / 72, 150 / 72)
+    PDF_RASTER_MATRIX = fitz.Matrix(150 / 72, 150 / 72)
 
     @staticmethod
-    def _pdf_page_to_bgr(doc: fitz.Document, page_index: int) -> np.ndarray:
+    def pdf_page_to_bgr(doc: fitz.Document, page_index: int) -> np.ndarray:
         pix = doc.load_page(page_index).get_pixmap(
-            matrix=OcrService._PDF_RASTER_MATRIX, alpha=False
+            matrix=OcrService.PDF_RASTER_MATRIX, alpha=False
         )
         rgb = fitz.Pixmap(fitz.csRGB, pix)
         h, w = rgb.height, rgb.width
@@ -79,19 +79,19 @@ class OcrService:
         temp_dir: str = TEMP_DIR,
         use_gpu: bool = OCR_USE_GPU,
     ) -> None:
-        self._languages = languages or ["vi", "en"]
-        self._blur_threshold = blur_threshold
-        self._temp_dir = temp_dir
-        self._use_gpu = use_gpu
-        self._reader: easyocr.Reader | None = None
+        self.languages = languages or ["vi", "en"]
+        self.blur_threshold = blur_threshold
+        self.temp_dir = temp_dir
+        self.use_gpu = use_gpu
+        self.reader: easyocr.Reader | None = None
 
-    def _get_reader(self) -> easyocr.Reader:
-        if self._reader is None:
-            logger.info("Initializing EasyOCR reader with gpu=%s", self._use_gpu)
-            self._reader = easyocr.Reader(self._languages, gpu=self._use_gpu)
-        return self._reader
+    def get_reader(self) -> easyocr.Reader:
+        if self.reader is None:
+            logger.info("Initializing EasyOCR reader with gpu=%s", self.use_gpu)
+            self.reader = easyocr.Reader(self.languages, gpu=self.use_gpu)
+        return self.reader
 
-    def _s3_client(self):
+    def s3_client(self):
         return boto3.client(
             "s3",
             aws_access_key_id=AWS_S3_ACCESS_KEY or None,
@@ -100,7 +100,7 @@ class OcrService:
         )
 
     @staticmethod
-    def _suffix_for_type(file_type: str) -> str:
+    def suffix_for_type(file_type: str) -> str:
         ft = (file_type or "").lower()
         if "image/png" in ft or ft == "image/png":
             return "png"
@@ -116,19 +116,19 @@ class OcrService:
             return "txt"
         return "bin"
 
-    def _download_s3_to_path(self, file_url: str, path: str) -> None:
-        m = _S3_URI.match(file_url)
+    def download_s3_to_path(self, file_url: str, path: str) -> None:
+        m = S3_URI.match(file_url)
         if not m:
             raise ValueError(f"Invalid S3 URI: {file_url!r}")
         bucket, key = m.group(1), m.group(2)
         try:
-            self._s3_client().download_file(bucket, key, path)
+            self.s3_client().download_file(bucket, key, path)
         except (ClientError, BotoCoreError) as e:
             logger.exception("S3 download failed bucket=%s key=%s: %s", bucket, key, e)
             raise
 
     @staticmethod
-    def _download_http_to_path(file_url: str, path: str) -> None:
+    def download_http_to_path(file_url: str, path: str) -> None:
         resp = requests.get(file_url, timeout=60, stream=True)
         resp.raise_for_status()
         with open(path, "wb") as f:
@@ -137,7 +137,7 @@ class OcrService:
                     f.write(chunk)
 
     @staticmethod
-    def _safe_unlink(path: str) -> None:
+    def safe_unlink(path: str) -> None:
         try:
             if path and os.path.isfile(path):
                 os.unlink(path)
@@ -145,17 +145,17 @@ class OcrService:
             pass
 
     def download_to_temp(self, file_url: str, file_type: str) -> str:
-        ext = self._suffix_for_type(file_type)
-        fd, path = tempfile.mkstemp(suffix=f".{ext}", dir=self._temp_dir)
+        ext = self.suffix_for_type(file_type)
+        fd, path = tempfile.mkstemp(suffix=f".{ext}", dir=self.temp_dir)
         os.close(fd)
 
         try:
             if file_url.startswith("s3://"):
-                self._download_s3_to_path(file_url, path)
+                self.download_s3_to_path(file_url, path)
             else:
-                self._download_http_to_path(file_url, path)
+                self.download_http_to_path(file_url, path)
         except Exception:
-            self._safe_unlink(path)
+            self.safe_unlink(path)
             raise
 
         return path
@@ -166,57 +166,57 @@ class OcrService:
             return False, 0.0
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         var = cv2.Laplacian(gray, cv2.CV_64F).var()
-        return (var >= self._blur_threshold, float(var))
+        return (var >= self.blur_threshold, float(var))
 
-    def _ocr_image(self, image_path: str) -> str:
-        reader = self._get_reader()
+    def ocr_image(self, image_path: str) -> str:
+        reader = self.get_reader()
         results = reader.readtext(image_path)
-        return self._join_ocr_text(results)
+        return self.join_ocr_text(results)
 
     @staticmethod
-    def _pdf_to_images(pdf_path: str) -> List[np.ndarray]:
+    def pdf_to_images(pdf_path: str) -> List[np.ndarray]:
         with fitz.open(pdf_path) as doc:
-            return [OcrService._pdf_page_to_bgr(doc, i) for i in range(len(doc))]
+            return [OcrService.pdf_page_to_bgr(doc, i) for i in range(len(doc))]
 
-    def _ocr_image_array(self, img_bgr: np.ndarray) -> str:
+    def ocr_image_array(self, img_bgr: np.ndarray) -> str:
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-        reader = self._get_reader()
+        reader = self.get_reader()
         results = reader.readtext(img_rgb)
-        return self._join_ocr_text(results)
+        return self.join_ocr_text(results)
 
     @staticmethod
-    def _join_ocr_text(results: List[Any]) -> str:
+    def join_ocr_text(results: List[Any]) -> str:
         return " ".join(str(r[1]) for r in results if len(r) > 1).strip()
 
-    def _ensure_image_not_blurry(self, image_path: str, context: str = "Image") -> None:
+    def ensure_image_not_blurry(self, image_path: str, context: str = "Image") -> None:
         ok, var = self.validate_image_blur(image_path)
         if not ok:
             raise ImageTooBlurryError(
-                f"{context} too blurry (Laplacian variance={var:.1f} < {self._blur_threshold})"
+                f"{context} too blurry (Laplacian variance={var:.1f} < {self.blur_threshold})"
             )
 
-    def _run_pdf_ocr(self, file_path: str) -> str:
-        images = self._pdf_to_images(file_path)
+    def run_pdf_ocr(self, file_path: str) -> str:
+        images = self.pdf_to_images(file_path)
         if not images:
             return ""
 
-        fd, first_path = tempfile.mkstemp(suffix=".png", dir=self._temp_dir)
+        fd, first_path = tempfile.mkstemp(suffix=".png", dir=self.temp_dir)
         try:
             os.close(fd)
             cv2.imwrite(first_path, images[0])
-            self._ensure_image_not_blurry(first_path, context="First page image/PDF")
+            self.ensure_image_not_blurry(first_path, context="First page image/PDF")
         finally:
-            self._safe_unlink(first_path)
+            self.safe_unlink(first_path)
 
-        texts = [self._ocr_image_array(img) for img in images]
+        texts = [self.ocr_image_array(img) for img in images]
         return "\n".join(texts).strip()
 
-    def _run_image_ocr(self, file_path: str) -> str:
-        self._ensure_image_not_blurry(file_path)
-        return self._ocr_image(file_path)
+    def run_image_ocr(self, file_path: str) -> str:
+        self.ensure_image_not_blurry(file_path)
+        return self.ocr_image(file_path)
 
     @staticmethod
-    def _resolve_content_type(file_path: str, file_type: str) -> str:
+    def resolve_content_type(file_path: str, file_type: str) -> str:
         ft = (file_type or "").lower()
         lower_path = file_path.lower()
         if TXT_MIME in ft or lower_path.endswith(".txt"):
@@ -231,7 +231,7 @@ class OcrService:
             return "image"
         return "unsupported"
 
-    def _validation_check_image(
+    def validation_check_image(
         self, img: np.ndarray, label: str = "Image"
     ) -> list[ValidationCheck]:
         checks: list[ValidationCheck] = []
@@ -248,12 +248,12 @@ class OcrService:
 
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
         blur_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
-        if blur_var < self._blur_threshold:
+        if blur_var < self.blur_threshold:
             checks.append(
                 ValidationCheck(
                     name="blur",
                     passed=False,
-                    message=f"{label} too blurry (variance={blur_var:.1f}, min={self._blur_threshold})",
+                    message=f"{label} too blurry (variance={blur_var:.1f}, min={self.blur_threshold})",
                 )
             )
 
@@ -269,7 +269,7 @@ class OcrService:
 
         return checks
 
-    def _validate_image_file(self, path: str) -> list[ValidationCheck]:
+    def validate_image_file(self, path: str) -> list[ValidationCheck]:
         img = cv2.imread(path)
         if img is None:
             return [
@@ -277,9 +277,9 @@ class OcrService:
                     name="integrity", passed=False, message="Cannot read image file"
                 )
             ]
-        return self._validation_check_image(img)
+        return self.validation_check_image(img)
 
-    def _validate_pdf_file(self, path: str) -> list[ValidationCheck]:
+    def validate_pdf_file(self, path: str) -> list[ValidationCheck]:
         try:
             doc = fitz.open(path)
         except Exception as e:
@@ -301,13 +301,13 @@ class OcrService:
         pages = range(len(doc)) if VALIDATE_ALL_PDF_PAGES else range(min(1, len(doc)))
 
         for i in pages:
-            img_bgr = self._pdf_page_to_bgr(doc, i)
-            checks.extend(self._validation_check_image(img_bgr, label=f"Page {i + 1}"))
+            img_bgr = self.pdf_page_to_bgr(doc, i)
+            checks.extend(self.validation_check_image(img_bgr, label=f"Page {i + 1}"))
 
         doc.close()
         return checks
 
-    def _validate_docx_file(self, path: str) -> list[ValidationCheck]:
+    def validate_docx_file(self, path: str) -> list[ValidationCheck]:
         try:
             Document(path)
             return []
@@ -319,7 +319,7 @@ class OcrService:
             ]
 
     @staticmethod
-    def _validate_text_like_file(path: str) -> list[ValidationCheck]:
+    def validate_text_like_file(path: str) -> list[ValidationCheck]:
         if os.path.getsize(path) == 0:
             return [
                 ValidationCheck(name="integrity", passed=False, message="File is empty")
@@ -327,14 +327,14 @@ class OcrService:
         return []
 
     def validate(self, file_path: str, file_type: str, doc_id: int) -> ValidationReport:
-        content_type = self._resolve_content_type(file_path, file_type)
+        content_type = self.resolve_content_type(file_path, file_type)
 
         handlers: dict[str, Callable[[str], list[ValidationCheck]]] = {
-            "image": self._validate_image_file,
-            "pdf": self._validate_pdf_file,
-            "docx": self._validate_docx_file,
-            "txt": self._validate_text_like_file,
-            "doc": self._validate_text_like_file,
+            "image": self.validate_image_file,
+            "pdf": self.validate_pdf_file,
+            "docx": self.validate_docx_file,
+            "txt": self.validate_text_like_file,
+            "doc": self.validate_text_like_file,
         }
 
         if content_type == "unsupported":
@@ -361,7 +361,7 @@ class OcrService:
         )
 
     @staticmethod
-    def _read_text_file(file_path: str) -> str:
+    def read_text_file(file_path: str) -> str:
         for enc in TEXT_FILE_ENCODINGS:
             try:
                 with open(file_path, "r", encoding=enc) as f:
@@ -372,21 +372,21 @@ class OcrService:
             return f.read().decode("latin-1", errors="ignore").strip()
 
     @staticmethod
-    def _extract_docx_text(file_path: str) -> str:
+    def extract_docx_text(file_path: str) -> str:
         doc = Document(file_path)
         paragraphs = [
             p.text.strip() for p in doc.paragraphs if p.text and p.text.strip()
         ]
         return "\n".join(paragraphs).strip()
 
-    def _extract_doc_text_via_soffice(self, file_path: str) -> str:
+    def extract_doc_text_via_soffice(self, file_path: str) -> str:
         soffice_path = shutil.which("soffice")
         if not soffice_path:
             raise RuntimeError(
                 "Cannot process .doc because LibreOffice (soffice) is not installed."
             )
 
-        out_dir = tempfile.mkdtemp(dir=self._temp_dir)
+        out_dir = tempfile.mkdtemp(dir=self.temp_dir)
         txt_path = os.path.join(
             out_dir, f"{os.path.splitext(os.path.basename(file_path))[0]}.txt"
         )
@@ -410,7 +410,7 @@ class OcrService:
                 raise RuntimeError(
                     "LibreOffice conversion succeeded but output file missing."
                 )
-            return self._read_text_file(txt_path)
+            return self.read_text_file(txt_path)
         except subprocess.TimeoutExpired as e:
             raise RuntimeError(
                 "Timed out while converting .doc with LibreOffice."
@@ -422,13 +422,13 @@ class OcrService:
             ) from e
         finally:
             try:
-                self._safe_unlink(txt_path)
+                self.safe_unlink(txt_path)
                 os.rmdir(out_dir)
             except OSError:
                 pass
 
     def run_ocr(self, file_path: str, file_type: str) -> str:
-        content_type = self._resolve_content_type(file_path, file_type)
+        content_type = self.resolve_content_type(file_path, file_type)
 
         if content_type == "unsupported":
             display_type = file_type or "application/octet-stream"
@@ -437,17 +437,17 @@ class OcrService:
             )
 
         handlers: dict[str, Callable[[str], str]] = {
-            "txt": self._read_text_file,
-            "docx": self._extract_docx_text,
-            "doc": self._extract_doc_text_via_soffice,
-            "pdf": self._run_pdf_ocr,
-            "image": self._run_image_ocr,
+            "txt": self.read_text_file,
+            "docx": self.extract_docx_text,
+            "doc": self.extract_doc_text_via_soffice,
+            "pdf": self.run_pdf_ocr,
+            "image": self.run_image_ocr,
         }
         return handlers[content_type](file_path)
 
     @staticmethod
     def cleanup_temp(path: str) -> None:
-        OcrService._safe_unlink(path)
+        OcrService.safe_unlink(path)
 
 
 ocr_service = OcrService()

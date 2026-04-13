@@ -9,16 +9,16 @@ logger = logging.getLogger(__name__)
 
 class EmbeddingService:
     def __init__(self) -> None:
-        self._model: SentenceTransformer = self._load_model()
+        self.model: SentenceTransformer = self.load_model()
 
     def encode_text(self, text: str) -> List[float]:
         try:
-            return self._model.encode(text).tolist()
+            return self.model.encode(text).tolist()
         except Exception as e:
             logger.error("Embedding encode failed: %s", e)
             raise HTTPException(status_code=500, detail=f"Embedding error: {str(e)}")
 
-    def _load_model(self) -> SentenceTransformer:
+    def load_model(self) -> SentenceTransformer:
         try:
             return SentenceTransformer(SENTENCE_TRANSFORMER_MODEL_NAME)
         except Exception:

@@ -44,21 +44,20 @@ class DocumentIndexer:
         ocr: OcrService,
         monitoring: OcrMonitoringService | None = None,
     ) -> None:
-        self._embedding = embedding
-        self._ocr = ocr
-        self._monitoring = monitoring or ocr_monitoring_service
+        self.embedding = embedding
+        self.ocr = ocr
+        self.monitoring = monitoring or ocr_monitoring_service
 
     def process_message(self, ch, method, properties, body):
         """RabbitMQ callback: download → validate → OCR → metrics → ES index → backend status."""
-        # Parse queue payload (doc_id, file_url, metadata).
         try:
-            doc_id, file_url, msg = self._parse_message(body)
+            doc_id, file_url, msg = self.parse_message(body)
         except (UnicodeDecodeError, json.JSONDecodeError, TypeError, KeyError) as e:
             logger.warning(
                 "Skipping invalid queue message (expected UTF-8 JSON with doc_id, file_url): %s",
                 e,
             )
-            self._ack_message(ch, method)
+            self.ack_message(ch, method)
             return
 
         file_type = msg.get("file_type", "application/octet-stream")
@@ -70,7 +69,6 @@ class DocumentIndexer:
         t0 = time.monotonic()
 
         try:
-            # Mark document as processing in the backend API.
             logger.info(
                 "Processing document doc_id=%s type=%s name=%r",
                 doc_id,
@@ -79,12 +77,10 @@ class DocumentIndexer:
             )
             self.update_processing_status(ch, doc_id, "PROCESSING")
 
-            # Fetch file from URL into a temp path for OCR.
-            temp_path = self._ocr.download_to_temp(file_url, file_type)
+            temp_path = self.ocr.download_to_temp(file_url, file_type)
             logger.debug("Downloaded to temp path=%s", temp_path)
 
-            # Pre-OCR validation (image/PDF checks); fail fast with validation report.
-            validation_result = self._ocr.validate(temp_path, file_type, doc_id)
+            validation_result = self.ocr.validate(temp_path, file_type, doc_id)
             if not validation_result.overall_passed:
                 VALIDATION_FAILURES.inc()
                 DOCS_PROCESSED.labels(status="failed").inc()
@@ -104,11 +100,10 @@ class DocumentIndexer:
                     "FAILED",
                     processing_report=processing_report,
                 )
-                self._ack_message(ch, method)
+                self.ack_message(ch, method)
                 return
 
-            # OCR: extract text; specific OCR errors update FAILED and ack inside helper.
-            raw_text = self._extract_text_or_fail(
+            raw_text = self.extract_text_or_fail(
                 ch=ch,
                 method=method,
                 doc_id=doc_id,
@@ -119,7 +114,6 @@ class DocumentIndexer:
                 DOCS_PROCESSED.labels(status="failed").inc()
                 return
 
-            # Empty text after OCR is treated as a hard failure.
             if not raw_text.strip():
                 logger.warning("OCR produced no text doc_id=%s", doc_id)
                 DOCS_PROCESSED.labels(status="failed").inc()
@@ -129,17 +123,15 @@ class DocumentIndexer:
                     "FAILED",
                     processing_report=json.dumps({"message": "Could not extract content (OCR produced no text)"}),
                 )
-                self._ack_message(ch, method)
+                self.ack_message(ch, method)
                 return
 
-            # Quality metrics, histograms, and optional alerts.
-            metrics = self._monitoring.compute_detailed_metrics(raw_text)
+            metrics = self.monitoring.compute_detailed_metrics(raw_text)
             metrics_json = json.dumps(metrics)
-            self._monitoring.check_quality_alert(metrics, doc_id)
+            self.monitoring.check_quality_alert(metrics, doc_id)
             score = metrics["ocr_quality_score"]
             QUALITY_SCORE.observe(score)
 
-            # Chunk text for embedding + Elasticsearch indexing.
             chunks = chunk_text(raw_text)
             logger.info(
                 "OCR done doc_id=%s ocr_score=%s chunks=%s chars=%s",
@@ -149,14 +141,12 @@ class DocumentIndexer:
                 len(raw_text),
             )
 
-            # Elasticsearch: delete existing chunks for this document_id, then index new chunks.
-            # On ES error: FAILED but keep extracted text and metrics for debugging/ops.
             try:
                 es = es_client.get_client()
                 delete_all_chunks_for_document(es, doc_id)
                 index_all_chunks(
                     es,
-                    self._embedding,
+                    self.embedding,
                     doc_id,
                     chunks,
                     owner_id,
@@ -176,10 +166,9 @@ class DocumentIndexer:
                     extracted_text=raw_text,
                     ocr_metrics=metrics_json,
                 )
-                self._ack_message(ch, method)
+                self.ack_message(ch, method)
                 return
 
-            # Success: indexed; persist COMPLETED and full payload to the backend.
             logger.info(
                 "Indexed doc_id=%s into %s (%s chunks)",
                 doc_id,
@@ -194,9 +183,8 @@ class DocumentIndexer:
                 extracted_text=raw_text,
                 ocr_metrics=metrics_json,
             )
-            self._ack_message(ch, method)
+            self.ack_message(ch, method)
         except Exception as e:
-            # Unexpected errors anywhere above (download, validation bug, etc.).
             logger.exception("Processing failed doc_id=%s", doc_id)
             DOCS_PROCESSED.labels(status="failed").inc()
             self.update_processing_status(
@@ -205,12 +193,11 @@ class DocumentIndexer:
                 "FAILED",
                 processing_report=json.dumps({"message": str(e)}),
             )
-            self._ack_message(ch, method)
+            self.ack_message(ch, method)
         finally:
-            # Observe wall-clock duration for this message; always delete temp file.
             PROCESSING_DURATION.observe(time.monotonic() - t0)
             if temp_path:
-                self._ocr.cleanup_temp(temp_path)
+                self.ocr.cleanup_temp(temp_path)
 
     @staticmethod
     def update_processing_status(
@@ -246,13 +233,13 @@ class DocumentIndexer:
                 e,
             )
 
-    def _extract_text_or_fail(
+    def extract_text_or_fail(
         self, ch, method, doc_id: int, temp_path: str, file_type: str
     ):
         try:
-            return self._ocr.run_ocr(temp_path, file_type)
+            return self.ocr.run_ocr(temp_path, file_type)
         except ImageTooBlurryError as e:
-            self._handle_ocr_failure(
+            self.handle_ocr_failure(
                 ch,
                 method,
                 doc_id,
@@ -261,7 +248,7 @@ class DocumentIndexer:
             )
             return None
         except UnsupportedFileTypeError as e:
-            self._handle_ocr_failure(
+            self.handle_ocr_failure(
                 ch,
                 method,
                 doc_id,
@@ -270,29 +257,29 @@ class DocumentIndexer:
             )
             return None
 
-    def _handle_ocr_failure(
+    def handle_ocr_failure(
         self, ch, method, doc_id: int, message: str, log_msg: str
     ) -> None:
         logger.warning(log_msg, doc_id, message)
         self.update_processing_status(
             ch, doc_id, "FAILED", processing_report=json.dumps({"message": message})
         )
-        self._ack_message(ch, method)
+        self.ack_message(ch, method)
 
-    def _parse_message(self, body) -> tuple[int, str, dict]:
-        msg = self._decode_message_body(body)
+    def parse_message(self, body) -> tuple[int, str, dict]:
+        msg = self.decode_message_body(body)
         doc_id = msg["doc_id"]
         file_url = msg["file_url"]
         return doc_id, file_url, msg
 
     @staticmethod
-    def _decode_message_body(body) -> dict:
+    def decode_message_body(body) -> dict:
         raw = bytes(body) if isinstance(body, memoryview) else body
         text = raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else raw
         return json.loads(text)
 
     @staticmethod
-    def _ack_message(ch, method) -> None:
+    def ack_message(ch, method) -> None:
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
 

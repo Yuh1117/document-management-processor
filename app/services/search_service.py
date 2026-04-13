@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 class SearchService:
     def __init__(self, embedding: EmbeddingService) -> None:
-        self._embedding = embedding
+        self.embedding = embedding
 
     def search(
         self,
@@ -30,16 +30,16 @@ class SearchService:
     ) -> Tuple[List[SearchHit], int]:
         try:
             es = es_client.get_client()
-            filters = self._build_filters(owner_id, folder_id)
-            body = self._build_search_body(query, page, page_size, filters, mode)
+            filters = self.build_filters(owner_id, folder_id)
+            body = self.build_search_body(query, page, page_size, filters, mode)
             resp = es.search(index=ELASTICSEARCH_INDEX, body=body)
-            return self._to_hits(resp), self._total_hits(resp)
+            return self.to_hits(resp), self.total_hits(resp)
         except Exception as e:
             logger.error("Search failed: %s", e)
             raise HTTPException(status_code=502, detail=f"Elasticsearch error: {str(e)}")
 
     @staticmethod
-    def _build_filters(owner_id: int | None, folder_id: int | None) -> list[dict]:
+    def build_filters(owner_id: int | None, folder_id: int | None) -> list[dict]:
         filters: list[dict] = []
         if owner_id is not None:
             filters.append({"term": {"owner_id": str(owner_id)}})
@@ -47,7 +47,7 @@ class SearchService:
             filters.append({"term": {"folder_id": str(folder_id)}})
         return filters
 
-    def _build_search_body(
+    def build_search_body(
         self,
         query: str,
         page: int,
@@ -55,16 +55,16 @@ class SearchService:
         filters: list[dict],
         mode: SearchMode,
     ) -> Dict[str, Any]:
-        body = self._load_query_template(self._template_path_for_mode(mode))
-        self._apply_pagination(body, page, page_size)
+        body = self.load_query_template(self.template_path_for_mode(mode))
+        self.apply_pagination(body, page, page_size)
 
         if mode == SearchMode.FULL_TEXT:
-            return self._fill_full_text_query(body, query, filters)
+            return self.fill_full_text_query(body, query, filters)
 
         offset = (page - 1) * page_size
         knn_k = offset + page_size
-        query_vector = self._embedding.encode_text(query)
-        return self._fill_semantic_or_hybrid_query(
+        query_vector = self.embedding.encode_text(query)
+        return self.fill_semantic_or_hybrid_query(
             body=body,
             query=query,
             query_vector=query_vector,
@@ -73,12 +73,12 @@ class SearchService:
             mode=mode,
         )
 
-    def _load_query_template(self, path: str) -> Dict[str, Any]:
+    def load_query_template(self, path: str) -> Dict[str, Any]:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
 
     @staticmethod
-    def _template_path_for_mode(mode: SearchMode) -> str:
+    def template_path_for_mode(mode: SearchMode) -> str:
         if mode == SearchMode.FULL_TEXT:
             return FULL_TEXT_QUERY_FILE
         if mode == SearchMode.SEMANTIC:
@@ -86,20 +86,20 @@ class SearchService:
         return HYBRID_QUERY_FILE
 
     @staticmethod
-    def _apply_pagination(body: Dict[str, Any], page: int, page_size: int) -> None:
+    def apply_pagination(body: Dict[str, Any], page: int, page_size: int) -> None:
         offset = (page - 1) * page_size
         body["from"] = offset
         body["size"] = page_size
 
-    def _fill_full_text_query(
+    def fill_full_text_query(
         self, body: Dict[str, Any], query: str, filters: list[dict]
     ) -> Dict[str, Any]:
         must0 = body["query"]["bool"]["must"][0]
-        self._set_text_query(must0, query, context="full_text")
-        self._apply_bool_filters(body, filters)
+        self.set_text_query(must0, query, context="full_text")
+        self.apply_bool_filters(body, filters)
         return body
 
-    def _fill_semantic_or_hybrid_query(
+    def fill_semantic_or_hybrid_query(
         self,
         body: Dict[str, Any],
         query: str,
@@ -108,17 +108,17 @@ class SearchService:
         filters: list[dict],
         mode: SearchMode,
     ) -> Dict[str, Any]:
-        self._apply_knn(body, query_vector, knn_k, filters)
+        self.apply_knn(body, query_vector, knn_k, filters)
 
         if mode == SearchMode.HYBRID:
-            self._apply_bool_filters(body, filters)
+            self.apply_bool_filters(body, filters)
             should0 = body["query"]["bool"]["should"][0]
-            self._set_text_query(should0, query, context="hybrid")
+            self.set_text_query(should0, query, context="hybrid")
 
         return body
 
     @staticmethod
-    def _set_text_query(clause: Dict[str, Any], query: str, context: str) -> None:
+    def set_text_query(clause: Dict[str, Any], query: str, context: str) -> None:
         if "multi_match" in clause:
             clause["multi_match"]["query"] = query
             return
@@ -135,11 +135,11 @@ class SearchService:
         raise KeyError(f"Unsupported {context} template: expected match or multi_match")
 
     @staticmethod
-    def _apply_bool_filters(body: Dict[str, Any], filters: list[dict]) -> None:
+    def apply_bool_filters(body: Dict[str, Any], filters: list[dict]) -> None:
         body["query"]["bool"]["filter"] = filters
 
     @staticmethod
-    def _apply_knn(
+    def apply_knn(
         body: Dict[str, Any],
         query_vector: list[float],
         knn_k: int,
@@ -163,7 +163,7 @@ class SearchService:
         knn["filter"]["bool"]["filter"] = filters
 
     @staticmethod
-    def _to_hits(resp: Dict[str, Any]) -> List[SearchHit]:
+    def to_hits(resp: Dict[str, Any]) -> List[SearchHit]:
         return [
             SearchHit(
                 document_id=hit["_source"]["document_id"],
@@ -173,7 +173,7 @@ class SearchService:
         ]
 
     @staticmethod
-    def _total_hits(resp: Dict[str, Any]) -> int:
+    def total_hits(resp: Dict[str, Any]) -> int:
         aggs = resp.get("aggregations") or {}
         card = aggs.get("unique_document_count")
         if isinstance(card, dict) and card.get("value") is not None:
