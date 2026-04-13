@@ -4,6 +4,7 @@ from app.deps import get_summarize_service
 from app.models.summarize import (
     ModelInfo,
     ModelsListResponse,
+    ReloadModelResponse,
     SummarizeRequest,
     SummarizeResponse,
 )
@@ -15,12 +16,21 @@ router = APIRouter()
 @router.post("/summarize", response_model=SummarizeResponse)
 def summarize(
     req: SummarizeRequest,
-    svc: SummarizeService = Depends(get_summarize_service),
+    summarize_service: SummarizeService = Depends(get_summarize_service),
 ):
-    result = svc.summarize(req.text, req.language)
+    result = summarize_service.summarize(req.text, req.language)
     return SummarizeResponse(**result)
 
 
+@router.post("/models/reload", response_model=ReloadModelResponse)
+def reload_model(summarize_service: SummarizeService = Depends(get_summarize_service)):
+    result = summarize_service.reload_model()
+    return ReloadModelResponse(**result)
+
+
 @router.get("/models", response_model=ModelsListResponse)
-def list_models(svc: SummarizeService = Depends(get_summarize_service)):
-    return ModelsListResponse(models=[ModelInfo(**m) for m in svc.list_models()])
+def list_models(summarize_service: SummarizeService = Depends(get_summarize_service)):
+    result = summarize_service.list_models()
+    return ModelsListResponse(
+        models=[ModelInfo(**m) for m in result],
+    )

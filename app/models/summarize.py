@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -15,11 +15,18 @@ class SummarizeResponse(BaseModel):
 
 
 class ModelInfo(BaseModel):
-    id: str
-    provider: str
-    is_default: bool
-    prompt_version: str
+    version: str
+    model_name: Optional[str] = None
+    is_active: bool = False
+    created_at: Optional[str] = None
 
 
 class ModelsListResponse(BaseModel):
     models: List[ModelInfo]
+
+
+class ReloadModelResponse(BaseModel):
+    previous_model: str
+    current_model: str
+    mlflow_model_uri: str
+    status: str
