@@ -1,5 +1,4 @@
 import logging
-from typing import List
 from fastapi import HTTPException
 from sentence_transformers import SentenceTransformer
 from app.core.config import SENTENCE_TRANSFORMER_MODEL_NAME
@@ -11,7 +10,7 @@ class EmbeddingService:
     def __init__(self) -> None:
         self.model: SentenceTransformer = self.load_model()
 
-    def encode_text(self, text: str) -> List[float]:
+    def encode_text(self, text: str) -> list[float]:
         try:
             return self.model.encode(text).tolist()
         except Exception as e:

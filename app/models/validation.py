@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import List
 from pydantic import BaseModel
 
 
@@ -13,5 +12,5 @@ class ValidationCheck(BaseModel):
 class ValidationReport(BaseModel):
     doc_id: int
     file_type: str
-    checks: List[ValidationCheck]
+    checks: list[ValidationCheck]
     overall_passed: bool

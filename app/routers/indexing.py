@@ -36,7 +36,6 @@ def reindex_document(
         doc_id,
         chunks,
         req.owner_id,
-        req.folder_id,
         req.name,
     )
 

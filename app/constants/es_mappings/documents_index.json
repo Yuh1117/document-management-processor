@@ -10,9 +10,6 @@
       "owner_id": {
         "type": "keyword"
       },
-      "folder_id": {
-        "type": "keyword"
-      },
       "name": {
         "type": "text",
         "analyzer": "standard",
