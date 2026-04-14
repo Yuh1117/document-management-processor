@@ -15,7 +15,6 @@ def search(
     hits, total = search_service.search(
         query=req.query,
         owner_id=req.owner_id,
-        folder_id=req.folder_id,
         page=req.page,
         page_size=req.page_size,
         mode=req.mode,

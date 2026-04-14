@@ -12,13 +12,12 @@ def index_all_chunks(
     doc_id: int,
     chunks: list[str],
     owner_id: Any,
-    folder_id: Any,
     doc_name: str | None,
 ) -> None:
     for i, chunk in enumerate(chunks):
         vector = embedding.encode_text(chunk)
         body = build_chunk_document_body(
-            doc_id, i, chunk, vector, owner_id, folder_id, doc_name
+            doc_id, i, chunk, vector, owner_id, doc_name
         )
         es.index(
             index=ELASTICSEARCH_INDEX,
@@ -64,14 +63,12 @@ def build_chunk_document_body(
     chunk: str,
     content_vector: list[float],
     owner_id: Any,
-    folder_id: Any,
     doc_name: str | None,
 ) -> dict:
     doc_body: dict = {
         "chunk_id": f"{doc_id}_{chunk_index}",
         "document_id": str(doc_id),
         "owner_id": str(owner_id) if owner_id is not None else None,
-        "folder_id": str(folder_id) if folder_id is not None else None,
         "content": chunk,
         "content_vector": content_vector,
     }

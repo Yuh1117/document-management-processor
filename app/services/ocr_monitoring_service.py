@@ -12,13 +12,13 @@ class OcrMonitoringService:
     def compute_detailed_metrics(self, text: str) -> dict:
         total = len(text) if text else 0
         words = text.split() if text else []
-        clean = self._clean_char_count(text)
-        invalid = self._invalid_control_char_count(text)
+        clean = self.clean_char_count(text)
+        invalid = self.invalid_control_char_count(text)
 
         return {
             "ocr_quality_score": int(clean / total * 100) if total else 0,
             "invalid_char_ratio": round(invalid / total, 4) if total else 0.0,
-            "avg_word_length": self._avg_word_length(words),
+            "avg_word_length": self.avg_word_length(words),
             "total_chars": total,
             "total_words": len(words),
         }
@@ -39,11 +39,11 @@ class OcrMonitoringService:
         return bool(alerts)
 
     @staticmethod
-    def _clean_char_count(text: str) -> int:
+    def clean_char_count(text: str) -> int:
         return sum(1 for c in text if c.isalnum() or c.isspace()) if text else 0
 
     @staticmethod
-    def _invalid_control_char_count(text: str) -> int:
+    def invalid_control_char_count(text: str) -> int:
         if not text:
             return 0
         return sum(
@@ -53,7 +53,7 @@ class OcrMonitoringService:
         )
 
     @staticmethod
-    def _avg_word_length(words: list[str]) -> float:
+    def avg_word_length(words: list[str]) -> float:
         if not words:
             return 0.0
         return round(sum(len(w) for w in words) / len(words), 2)

@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -22,7 +22,7 @@ class ModelInfo(BaseModel):
 
 
 class ModelsListResponse(BaseModel):
-    models: List[ModelInfo]
+    models: list[ModelInfo]
 
 
 class ReloadModelResponse(BaseModel):
