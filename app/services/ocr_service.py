@@ -160,13 +160,11 @@ class ImageAnalyzer:
         self.blur_threshold = blur_threshold
         self.temp_dir = temp_dir
         self.use_gpu = use_gpu
+        self.reader = self.load_reader()
 
-    @property
-    def reader(self) -> easyocr.Reader:
-        if self.reader is None:
-            logger.info("Initializing EasyOCR (gpu=%s)", self.use_gpu)
-            self.reader = easyocr.Reader(self.languages, gpu=self.use_gpu)
-        return self.reader
+    def load_reader(self) -> easyocr.Reader:
+        logger.info("Initializing EasyOCR (gpu=%s)", self.use_gpu)
+        return easyocr.Reader(self.languages, gpu=self.use_gpu)
 
     def ocr_file(self, image_path: str) -> str:
         results = self.reader.readtext(image_path)
