@@ -37,15 +37,8 @@ DOC_MIME = "application/msword"
 TXT_MIME = "text/plain"
 PDF_MIME = "application/pdf"
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif", ".webp")
-
 TEXT_FILE_ENCODINGS = ("utf-8", "utf-8-sig", "cp1258", "latin-1")
-SUPPORTED_OCR_TYPES = (
-    "image/*",
-    PDF_MIME,
-    TXT_MIME,
-    DOC_MIME,
-    DOCX_MIME,
-)
+SUPPORTED_TYPES = ("image/*", PDF_MIME, TXT_MIME, DOC_MIME, DOCX_MIME)
 
 MIME_TO_EXT: dict[str, str] = {
     "image/png": "png",
@@ -63,7 +56,7 @@ class ImageTooBlurryError(Exception):
 
 
 class UnsupportedFileTypeError(Exception):
-    """Raised when file type is not supported by OCR pipeline."""
+    """Raised when file type is not supported by Processing pipeline."""
 
 
 def safe_unlink(path: str) -> None:
@@ -145,7 +138,7 @@ class FileDownloader:
 
 
 class ImageAnalyzer:
-    """Low-level image operations: blur check, contrast, OCR via EasyOCR."""
+    """Low-level image operations: blur, contrast, OCR via EasyOCR."""
 
     PDF_RASTER_MATRIX = fitz.Matrix(150 / 72, 150 / 72)
 
@@ -153,12 +146,10 @@ class ImageAnalyzer:
         self,
         languages: list[str] | None = None,
         blur_threshold: float = LAPLACIAN_VAR_THRESHOLD,
-        temp_dir: str = TEMP_DIR,
         use_gpu: bool = OCR_USE_GPU,
     ) -> None:
         self.languages = languages or ["vi", "en"]
         self.blur_threshold = blur_threshold
-        self.temp_dir = temp_dir
         self.use_gpu = use_gpu
         self.reader = self.load_reader()
 
@@ -167,35 +158,15 @@ class ImageAnalyzer:
         return easyocr.Reader(self.languages, gpu=self.use_gpu)
 
     def ocr_file(self, image_path: str) -> str:
-        results = self.reader.readtext(image_path)
-        return self.join(results)
+        return self.join(self.reader.readtext(image_path))
 
     def ocr_array(self, img_bgr: np.ndarray) -> str:
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-        results = self.reader.readtext(img_rgb)
-        return self.join(results)
+        return self.join(self.reader.readtext(img_rgb))
 
     @staticmethod
     def join(results: list[Any]) -> str:
         return " ".join(str(r[1]) for r in results if len(r) > 1).strip()
-
-    def laplacian_variance(self, img_bgr: np.ndarray) -> float:
-        gray = (
-            cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-            if len(img_bgr.shape) == 3
-            else img_bgr
-        )
-        return float(cv2.Laplacian(gray, cv2.CV_64F).var())
-
-    def ensure_not_blurry(self, image_path: str, context: str = "Image") -> None:
-        img = cv2.imread(image_path)
-        if img is None:
-            raise ImageTooBlurryError(f"{context}: cannot read image file")
-        var = self.laplacian_variance(img)
-        if var < self.blur_threshold:
-            raise ImageTooBlurryError(
-                f"{context} too blurry (variance={var:.1f} < {self.blur_threshold})"
-            )
 
     def pdf_to_bgr_pages(self, pdf_path: str) -> list[np.ndarray]:
         with fitz.open(pdf_path) as doc:
@@ -230,7 +201,9 @@ class ImageAnalyzer:
             if len(img_bgr.shape) == 3
             else img_bgr
         )
-        blur_var = self.laplacian_variance(img_bgr)
+        blur_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+        contrast = float(np.std(gray))
+
         if blur_var < self.blur_threshold:
             checks.append(
                 ValidationCheck(
@@ -240,7 +213,6 @@ class ImageAnalyzer:
                 )
             )
 
-        contrast = float(np.std(gray))
         if contrast < MIN_CONTRAST_THRESHOLD:
             checks.append(
                 ValidationCheck(
@@ -323,7 +295,7 @@ class FileValidator:
             ]
 
         pages = range(len(doc)) if VALIDATE_ALL_PDF_PAGES else range(min(1, len(doc)))
-        checks = []
+        checks: list[ValidationCheck] = []
         for i in pages:
             checks.extend(
                 self.analyzer.image_quality_checks(
@@ -363,14 +335,10 @@ class TextExtractor:
 
     def extract(self, file_path: str, file_type: str) -> str:
         content_type = resolve_content_type(file_path, file_type)
-        if content_type == "unsupported":
-            raise UnsupportedFileTypeError(
-                f"Unsupported file type: {file_type or 'application/octet-stream'}. "
-                f"Supported: {', '.join(SUPPORTED_OCR_TYPES)}."
-            )
+
         handlers: dict[str, Callable[[str], str]] = {
             "txt": self.read_text_file,
-            "docx": self.extract_docx_text,
+            "docx": self.extract_docx,
             "doc": self.extract_doc,
             "pdf": self.extract_pdf,
             "image": self.extract_image,
@@ -387,29 +355,19 @@ class TextExtractor:
         with open(file_path, "rb") as f:
             return f.read().decode("latin-1", errors="ignore").strip()
 
-    def extract_docx_text(self, file_path: str) -> str:
+    def extract_docx(file_path: str) -> str:
         doc = Document(file_path)
         return "\n".join(
             p.text.strip() for p in doc.paragraphs if p.text and p.text.strip()
         ).strip()
 
     def extract_image(self, file_path: str) -> str:
-        self.analyzer.ensure_not_blurry(file_path)
         return self.analyzer.ocr_file(file_path)
 
     def extract_pdf(self, file_path: str) -> str:
         pages = self.analyzer.pdf_to_bgr_pages(file_path)
         if not pages:
             return ""
-
-        fd, first_path = tempfile.mkstemp(suffix=".png", dir=self.temp_dir)
-        try:
-            os.close(fd)
-            cv2.imwrite(first_path, pages[0])
-            self.analyzer.ensure_not_blurry(first_path, context="First PDF page")
-        finally:
-            safe_unlink(first_path)
-
         return "\n".join(self.analyzer.ocr_array(p) for p in pages).strip()
 
     def extract_doc(self, file_path: str) -> str:
@@ -418,8 +376,6 @@ class TextExtractor:
             raise RuntimeError("LibreOffice (soffice) is not installed.")
 
         out_dir = tempfile.mkdtemp(dir=self.temp_dir)
-        base = os.path.splitext(os.path.basename(file_path))[0]
-        txt_path = os.path.join(out_dir, f"{base}.txt")
         try:
             subprocess.run(
                 [
@@ -436,11 +392,12 @@ class TextExtractor:
                 text=True,
                 timeout=120,
             )
-            if not os.path.isfile(txt_path):
+            txt_files = [f for f in os.listdir(out_dir) if f.endswith(".txt")]
+            if not txt_files:
                 raise RuntimeError(
                     "LibreOffice conversion succeeded but output file missing."
                 )
-            return self.read_text_file(txt_path)
+            return self.read_text_file(os.path.join(out_dir, txt_files[0]))
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError("Timed out converting .doc with LibreOffice.") from exc
         except subprocess.CalledProcessError as exc:
@@ -448,14 +405,10 @@ class TextExtractor:
                 f"LibreOffice conversion failed: {(exc.stderr or '').strip()}"
             ) from exc
         finally:
-            safe_unlink(txt_path)
-            try:
-                os.rmdir(out_dir)
-            except OSError:
-                pass
+            shutil.rmtree(out_dir, ignore_errors=True)
 
 
-class OcrService:
+class ExtractionService:
     def __init__(
         self,
         languages: list[str] | None = None,
@@ -463,10 +416,13 @@ class OcrService:
         temp_dir: str = TEMP_DIR,
         use_gpu: bool = OCR_USE_GPU,
     ) -> None:
-        analyzer = ImageAnalyzer(languages, blur_threshold, temp_dir, use_gpu)
+        analyzer = ImageAnalyzer(languages, blur_threshold, use_gpu)
         self.downloader = FileDownloader(temp_dir)
         self.extractor = TextExtractor(analyzer, temp_dir)
         self.validator = FileValidator(analyzer)
+    
+    def is_supported(self, file_type: str) -> bool:
+        return resolve_content_type("", file_type) != "unsupported"
 
     def download_to_temp(self, file_url: str, file_type: str) -> str:
         return self.downloader.download(file_url, file_type)
@@ -474,7 +430,7 @@ class OcrService:
     def validate(self, file_path: str, file_type: str, doc_id: int) -> ValidationReport:
         return self.validator.validate(file_path, file_type, doc_id)
 
-    def run_ocr(self, file_path: str, file_type: str) -> str:
+    def extract_text(self, file_path: str, file_type: str) -> str:
         return self.extractor.extract(file_path, file_type)
 
     @staticmethod
@@ -482,4 +438,4 @@ class OcrService:
         safe_unlink(path)
 
 
-ocr_service = OcrService()
+extraction_service = ExtractionService()

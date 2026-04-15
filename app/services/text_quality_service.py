@@ -3,12 +3,12 @@ from __future__ import annotations
 import logging
 import unicodedata
 
-from app.core.config import OCR_MAX_INVALID_CHAR_RATIO, OCR_MIN_QUALITY_SCORE
+from app.core.config import TEXT_MAX_INVALID_CHAR_RATIO, TEXT_MIN_QUALITY_SCORE
 
 logger = logging.getLogger(__name__)
 
 
-class OcrMonitoringService:
+class TextQualityService:
     def compute_detailed_metrics(self, text: str) -> dict:
         total = len(text) if text else 0
         words = text.split() if text else []
@@ -16,7 +16,7 @@ class OcrMonitoringService:
         invalid = self.invalid_control_char_count(text)
 
         return {
-            "ocr_quality_score": int(clean / total * 100) if total else 0,
+            "text_quality_score": int(clean / total * 100) if total else 0,
             "invalid_char_ratio": round(invalid / total, 4) if total else 0.0,
             "avg_word_length": self.avg_word_length(words),
             "total_chars": total,
@@ -25,17 +25,17 @@ class OcrMonitoringService:
 
     def check_quality_alert(self, metrics: dict, doc_id: int) -> bool:
         alerts = []
-        if metrics.get("ocr_quality_score", 0) < OCR_MIN_QUALITY_SCORE:
+        if metrics.get("text_quality_score", 0) < TEXT_MIN_QUALITY_SCORE:
             alerts.append(
-                f"quality_score={metrics['ocr_quality_score']} < {OCR_MIN_QUALITY_SCORE}"
+                f"quality_score={metrics['text_quality_score']} < {TEXT_MIN_QUALITY_SCORE}"
             )
-        if metrics.get("invalid_char_ratio", 0) > OCR_MAX_INVALID_CHAR_RATIO:
+        if metrics.get("invalid_char_ratio", 0) > TEXT_MAX_INVALID_CHAR_RATIO:
             alerts.append(
-                f"invalid_chars={metrics['invalid_char_ratio']:.4f} > {OCR_MAX_INVALID_CHAR_RATIO}"
+                f"invalid_chars={metrics['invalid_char_ratio']:.4f} > {TEXT_MAX_INVALID_CHAR_RATIO}"
             )
 
         if alerts:
-            logger.warning("OCR quality alert doc_id=%s: %s", doc_id, "; ".join(alerts))
+            logger.warning("Text quality alert doc_id=%s: %s", doc_id, "; ".join(alerts))
         return bool(alerts)
 
     @staticmethod
@@ -59,4 +59,4 @@ class OcrMonitoringService:
         return round(sum(len(w) for w in words) / len(words), 2)
 
 
-ocr_monitoring_service = OcrMonitoringService()
+text_quality_service = TextQualityService()

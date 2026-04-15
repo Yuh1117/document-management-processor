@@ -19,15 +19,15 @@ from app.core.metrics import (
     VALIDATION_FAILURES,
 )
 from app.services.embedding_service import EmbeddingService, embedding_service
-from app.services.ocr_monitoring_service import (
-    OcrMonitoringService,
-    ocr_monitoring_service,
+from app.services.text_quality_service import (
+    TextQualityService,
+    text_quality_service,
 )
-from app.services.ocr_service import (
+from app.services.extraction_service import (
     ImageTooBlurryError,
-    OcrService,
+    ExtractionService,
     UnsupportedFileTypeError,
-    ocr_service,
+    extraction_service,
 )
 from app.utils.elasticsearch.indexing import (
     chunk_text,
@@ -74,15 +74,15 @@ class StatusPublisher:
         *,
         processing_report: str | None = None,
         extracted_text: str | None = None,
-        ocr_metrics: str | None = None,
+        processing_metrics: str | None = None,
     ) -> None:
         payload: dict[str, Any] = {"documentId": doc_id, "processingStatus": status}
         if processing_report is not None:
             payload["processingReport"] = processing_report
         if extracted_text is not None:
             payload["extractedText"] = extracted_text
-        if ocr_metrics is not None:
-            payload["ocrMetrics"] = ocr_metrics
+        if processing_metrics is not None:
+            payload["processingMetrics"] = processing_metrics
         try:
             self._ch.basic_publish(
                 exchange="",
@@ -98,9 +98,9 @@ class StatusPublisher:
                 "Status publish failed doc_id=%s status=%s: %s", doc_id, status, exc
             )
 
-    def completed(self, doc_id: int, extracted_text: str, ocr_metrics: str) -> None:
+    def completed(self, doc_id: int, extracted_text: str, processing_metrics: str) -> None:
         self.publish(
-            doc_id, "COMPLETED", extracted_text=extracted_text, ocr_metrics=ocr_metrics
+            doc_id, "COMPLETED", extracted_text=extracted_text, processing_metrics=processing_metrics
         )
 
     def failed(
@@ -109,7 +109,7 @@ class StatusPublisher:
         message: str,
         report_extra: dict | None = None,
         extracted_text: str | None = None,
-        ocr_metrics: str | None = None,
+        processing_metrics: str | None = None,
     ) -> None:
         report = {"message": message}
         if report_extra:
@@ -119,23 +119,23 @@ class StatusPublisher:
             "FAILED",
             processing_report=json.dumps(report),
             extracted_text=extracted_text,
-            ocr_metrics=ocr_metrics,
+            processing_metrics=processing_metrics,
         )
 
     def processing(self, doc_id: int) -> None:
         self.publish(doc_id, "PROCESSING")
 
 
-class DocumentIndexer:
+class DocumentProcessor:
     def __init__(
         self,
         embedding: EmbeddingService,
-        ocr: OcrService,
-        monitoring: OcrMonitoringService | None = None,
+        extraction: ExtractionService,
+        monitoring: TextQualityService | None = None,
     ) -> None:
         self.embedding = embedding
-        self.ocr = ocr
-        self.monitoring = monitoring or ocr_monitoring_service
+        self.extraction = extraction
+        self.monitoring = monitoring or text_quality_service
 
     def process_message(self, ch, method, properties, body) -> None:
         try:
@@ -159,7 +159,7 @@ class DocumentIndexer:
         finally:
             PROCESSING_DURATION.observe(time.monotonic() - t0)
             if temp_path:
-                self.ocr.cleanup_temp(temp_path)
+                self.extraction.cleanup_temp(temp_path)
             ch.basic_ack(delivery_tag=method.delivery_tag)
 
     def process(
@@ -168,9 +168,16 @@ class DocumentIndexer:
         logger.info(
             "Processing doc_id=%s type=%s name=%r", doc.doc_id, doc.file_type, doc.name
         )
+
+        if not self.extraction.is_supported(doc.file_type):
+            logger.warning("Unsupported file type doc_id=%s type=%s", doc.doc_id, doc.file_type)
+            DOCS_PROCESSED.labels(status="failed").inc()
+            publisher.failed(doc.doc_id, f"Unsupported file type: {doc.file_type}")
+            return
+
         publisher.processing(doc.doc_id)
 
-        temp_path = self.ocr.download_to_temp(doc.file_url, doc.file_type)
+        temp_path = self.extraction.download_to_temp(doc.file_url, doc.file_type)
         temp_path_ref[0] = temp_path
         logger.debug("Downloaded to temp_path=%s", temp_path)
 
@@ -181,13 +188,13 @@ class DocumentIndexer:
         if raw_text is None:
             return
 
-        metrics = self._compute_metrics(doc, raw_text)
-        self._index(doc, publisher, raw_text, metrics)
+        metrics = self.compute_metrics(doc, raw_text)
+        self.index(doc, publisher, raw_text, metrics)
 
     def validate(
         self, doc: DocumentMessage, publisher: StatusPublisher, temp_path: str
     ) -> bool:
-        result = self.ocr.validate(temp_path, doc.file_type, doc.doc_id)
+        result = self.extraction.validate(temp_path, doc.file_type, doc.doc_id)
         if result.overall_passed:
             return True
 
@@ -210,35 +217,30 @@ class DocumentIndexer:
         self, doc: DocumentMessage, publisher: StatusPublisher, temp_path: str
     ) -> str | None:
         try:
-            raw_text = self.ocr.run_ocr(temp_path, doc.file_type)
+            raw_text = self.extraction.extract_text(temp_path, doc.file_type)
         except ImageTooBlurryError as exc:
             logger.warning("Blurry image doc_id=%s: %s", doc.doc_id, exc)
             publisher.failed(doc.doc_id, str(exc))
             DOCS_PROCESSED.labels(status="failed").inc()
             return None
-        except UnsupportedFileTypeError as exc:
-            logger.warning("Unsupported type doc_id=%s: %s", doc.doc_id, exc)
-            publisher.failed(doc.doc_id, str(exc))
-            DOCS_PROCESSED.labels(status="failed").inc()
-            return None
 
         if not raw_text.strip():
-            logger.warning("OCR produced no text doc_id=%s", doc.doc_id)
+            logger.warning("Produced no text doc_id=%s", doc.doc_id)
             publisher.failed(
-                doc.doc_id, "Could not extract content (OCR produced no text)"
+                doc.doc_id, "Could not extract content (Produced no text)"
             )
             DOCS_PROCESSED.labels(status="failed").inc()
             return None
 
         return raw_text
 
-    def _compute_metrics(self, doc: DocumentMessage, raw_text: str) -> dict:
+    def compute_metrics(self, doc: DocumentMessage, raw_text: str) -> dict:
         metrics = self.monitoring.compute_detailed_metrics(raw_text)
         self.monitoring.check_quality_alert(metrics, doc.doc_id)
-        QUALITY_SCORE.observe(metrics["ocr_quality_score"])
+        QUALITY_SCORE.observe(metrics["text_quality_score"])
         return metrics
 
-    def _index(
+    def index(
         self,
         doc: DocumentMessage,
         publisher: StatusPublisher,
@@ -248,9 +250,9 @@ class DocumentIndexer:
         chunks = chunk_text(raw_text)
         metrics_json = json.dumps(metrics)
         logger.info(
-            "OCR done doc_id=%s score=%s chunks=%s chars=%s",
+            "Extract done doc_id=%s score=%s chunks=%s chars=%s",
             doc.doc_id,
-            metrics["ocr_quality_score"],
+            metrics["text_quality_score"],
             len(chunks),
             len(raw_text),
         )
@@ -271,13 +273,13 @@ class DocumentIndexer:
                     {"message": f"Elasticsearch indexing failed: {exc}"}
                 ),
                 extracted_text=raw_text,
-                ocr_metrics=metrics_json,
+                processing_metrics=metrics_json,
             )
             publisher.failed(
                 doc.doc_id,
                 f"Elasticsearch indexing failed: {exc}",
                 extracted_text=raw_text,
-                ocr_metrics=metrics_json,
+                processing_metrics=metrics_json,
             )
             return
 
@@ -300,7 +302,7 @@ def main() -> None:
         ELASTICSEARCH_INDEX,
     )
 
-    indexer = DocumentIndexer(embedding_service, ocr_service, ocr_monitoring_service)
+    processor = DocumentProcessor(embedding_service, extraction_service, text_quality_service)
 
     params = pika.URLParameters(RABBITMQ_URL)
     connection = pika.BlockingConnection(params)
@@ -309,7 +311,7 @@ def main() -> None:
     channel.queue_declare(queue=RABBITMQ_PROCESSING_RESULT_QUEUE, durable=True)
     channel.basic_qos(prefetch_count=1)
     channel.basic_consume(
-        queue=RABBITMQ_DOCUMENT_QUEUE, on_message_callback=indexer.process_message
+        queue=RABBITMQ_DOCUMENT_QUEUE, on_message_callback=processor.process_message
     )
 
     logger.info("Consuming messages on %s (prefetch=1)", RABBITMQ_DOCUMENT_QUEUE)
