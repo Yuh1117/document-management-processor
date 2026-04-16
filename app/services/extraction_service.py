@@ -10,6 +10,7 @@ import boto3
 import cv2
 import easyocr
 import fitz
+import pandas as pd
 import numpy as np
 import requests
 from botocore.exceptions import BotoCoreError, ClientError
@@ -36,9 +37,10 @@ DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.docu
 DOC_MIME = "application/msword"
 TXT_MIME = "text/plain"
 PDF_MIME = "application/pdf"
-IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif", ".webp")
-TEXT_FILE_ENCODINGS = ("utf-8", "utf-8-sig", "cp1258", "latin-1")
-SUPPORTED_TYPES = ("image/*", PDF_MIME, TXT_MIME, DOC_MIME, DOCX_MIME)
+XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+XLS_MIME  = "application/vnd.ms-excel"
+
+SUPPORTED_TYPES = ("image/*", PDF_MIME, TXT_MIME, DOC_MIME, DOCX_MIME, XLSX_MIME, XLS_MIME)
 
 MIME_TO_EXT: dict[str, str] = {
     "image/png": "png",
@@ -48,7 +50,12 @@ MIME_TO_EXT: dict[str, str] = {
     DOCX_MIME: "docx",
     DOC_MIME: "doc",
     TXT_MIME: "txt",
+    XLSX_MIME: "xlsx",
+    XLS_MIME: "xls",
 }
+
+IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif", ".webp")
+TEXT_FILE_ENCODINGS = ("utf-8", "utf-8-sig", "cp1258", "latin-1")
 
 
 class ImageTooBlurryError(Exception):
@@ -88,6 +95,10 @@ def resolve_content_type(file_path: str, file_type: str) -> str:
         return "pdf"
     if ft.startswith("image/") or lp.endswith(IMAGE_EXTENSIONS):
         return "image"
+    if XLSX_MIME in ft or lp.endswith(".xlsx"): 
+        return "xlsx"
+    if XLS_MIME in ft  or lp.endswith(".xls"):  
+        return "xls"
     return "unsupported"
 
 
@@ -263,6 +274,8 @@ class FileValidator:
             "docx": self.check_docx,
             "txt": self.check_text,
             "doc": self.check_text,
+            "xlsx": self.check_spreadsheet,
+            "xls": self.check_spreadsheet,
         }
         return handlers.get(content_type, lambda _: [])(file_path)
 
@@ -324,6 +337,14 @@ class FileValidator:
                 ValidationCheck(name="integrity", passed=False, message="File is empty")
             ]
         return []
+    
+    @staticmethod
+    def check_spreadsheet(path: str) -> list[ValidationCheck]:
+        try:
+            pd.read_excel(path, nrows=1)
+            return []
+        except Exception as exc:
+            return [ValidationCheck(name="integrity", passed=False, message=f"Spreadsheet corrupt: {exc}")]
 
 
 class TextExtractor:
@@ -342,6 +363,8 @@ class TextExtractor:
             "doc": self.extract_doc,
             "pdf": self.extract_pdf,
             "image": self.extract_image,
+            "xlsx": self.extract_spreadsheet,
+            "xls": self.extract_spreadsheet,
         }
         return handlers[content_type](file_path)
 
@@ -406,6 +429,16 @@ class TextExtractor:
             ) from exc
         finally:
             shutil.rmtree(out_dir, ignore_errors=True)
+    
+    def extract_spreadsheet(self, file_path: str) -> str:
+        sheets = pd.read_excel(file_path, sheet_name=None)
+        lines = []
+        for df in sheets.values():
+            for _, row in df.iterrows():
+                row_text = " ".join(str(v) for v in row if pd.notna(v))
+                if row_text.strip():
+                    lines.append(row_text)
+        return "\n".join(lines).strip()
 
 
 class ExtractionService:
