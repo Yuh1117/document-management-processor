@@ -378,7 +378,7 @@ class TextExtractor:
         with open(file_path, "rb") as f:
             return f.read().decode("latin-1", errors="ignore").strip()
 
-    def extract_docx(file_path: str) -> str:
+    def extract_docx(self, file_path: str) -> str:
         doc = Document(file_path)
         return "\n".join(
             p.text.strip() for p in doc.paragraphs if p.text and p.text.strip()
