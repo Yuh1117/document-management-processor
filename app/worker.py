@@ -26,7 +26,6 @@ from app.services.text_quality_service import (
 from app.services.extraction_service import (
     ImageTooBlurryError,
     ExtractionService,
-    UnsupportedFileTypeError,
     extraction_service,
 )
 from app.utils.elasticsearch.indexing import (
