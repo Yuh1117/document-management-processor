@@ -27,7 +27,6 @@ This service sits between the Spring Boot backend and Elasticsearch. It:
 - Document chunking and embedding generation (Sentence Transformers)
 - Elasticsearch indexing with full-text, semantic, and hybrid search modes
 - AI-powered document summarization via Google Gemini
-- Prometheus metrics exposed at `/metrics`
 - Async document processing via RabbitMQ consumer worker
 
 ## Tech stack
@@ -37,11 +36,10 @@ This service sits between the Spring Boot backend and Elasticsearch. It:
 - Elasticsearch 9
 - RabbitMQ (pika)
 - EasyOCR, PyMuPDF, python-docx (document parsing)
-- OpenCV (image quality validation)
+- OpenCV headless (image quality validation)
 - Sentence Transformers (embeddings)
-- Google Generative AI SDK (Gemini summarization)
+- Google GenAI SDK (Gemini summarization)
 - MLflow (experiment tracking)
-- Prometheus + prometheus-fastapi-instrumentator (metrics)
 - AWS S3 (boto3) for document file retrieval
 
 ## Prerequisites
@@ -51,7 +49,7 @@ This service sits between the Spring Boot backend and Elasticsearch. It:
 - Running RabbitMQ instance
 - AWS S3 bucket (or compatible) with document files
 - Google Gemini API key (for summarization)
-- (Optional) GPU for faster OCR — CPU works fine with `OCR_USE_GPU=false`
+- (Optional) GPU for faster EasyOCR — CPU is supported by default
 
 ## Quick start
 
@@ -96,24 +94,29 @@ All configuration is via environment variables:
 | Variable | Description |
 |---|---|
 | `RABBITMQ_URL` | RabbitMQ connection URL |
-| `RABBITMQ_DOCUMENT_QUEUE` | Queue name for document events |
+| `RABBITMQ_DOCUMENT_PROCESS_QUEUE` | Queue name for incoming document events |
+| `RABBITMQ_DOCUMENT_RESULT_QUEUE` | Queue name for processing result events |
 | `ELASTICSEARCH_HOST` | Elasticsearch host URL |
 | `ELASTICSEARCH_INDEX` | Index name for documents |
 | `BACKEND_BASE_URL` | Base URL of the Spring Boot backend |
 | `AWS_S3_ACCESS_KEY` | S3 access key |
 | `AWS_S3_SECRET_KEY` | S3 secret key |
 | `AWS_S3_REGION` | S3 region |
+| `TEMP_DIR` | Temporary directory for downloaded files |
 | `SENTENCE_TRANSFORMER_MODEL_NAME` | HuggingFace model name for embeddings |
 | `GEMINI_API_KEY` | Google Gemini API key |
-| `GEMINI_MODEL_NAME` | Gemini model name (e.g. `gemini-2.0-flash`) |
+| `GEMINI_MODEL_NAME` | Gemini model name (e.g. `gemini-3.0-flash`) |
 | `SUMMARIZE_PROMPT_VERSION` | MLflow prompt version tag |
 | `MLFLOW_TRACKING_URI` | MLflow tracking server URI |
-| `MLFLOW_SUMMARIZE_MODEL_URI` | MLflow model URI for summarization |
+| `MLFLOW_REGISTERED_MODEL_NAME` | Registered MLflow model name for summarization |
 | `CHUNK_SIZE` | Token chunk size for indexing (default: `250`) |
 | `CHUNK_OVERLAP` | Token overlap between chunks (default: `50`) |
-| `OCR_USE_GPU` | Use GPU for EasyOCR (default: `false`) |
-| `OCR_MIN_QUALITY_SCORE` | Minimum OCR quality score (default: `60`) |
 | `LAPLACIAN_VAR_THRESHOLD` | Blur detection threshold (default: `100.0`) |
+| `MIN_IMAGE_WIDTH` | Minimum image width for OCR (default: `150`) |
+| `MIN_IMAGE_HEIGHT` | Minimum image height for OCR (default: `150`) |
+| `MIN_CONTRAST_THRESHOLD` | Minimum contrast for image quality (default: `15.0`) |
+| `TEXT_MIN_QUALITY_SCORE` | Minimum text quality score (default: `60`) |
+| `TEXT_MAX_INVALID_CHAR_RATIO` | Max ratio of invalid characters allowed (default: `0.3`) |
 
 ## API endpoints
 
@@ -121,8 +124,9 @@ All configuration is via environment variables:
 |---|---|---|
 | `POST` | `/search` | Full-text / semantic / hybrid document search |
 | `POST` | `/summarize` | Generate AI summary for a document |
-| `POST` | `/indexing` | Manually trigger document indexing |
-| `GET` | `/metrics` | Prometheus metrics |
+| `POST` | `/models/reload` | Reload the summarization model from MLflow |
+| `GET` | `/models` | List available summarization models |
+| `DELETE` | `/index/{doc_id}` | Delete all indexed chunks for a document |
 
 API docs are available at `http://localhost:8000/docs` when the server is running.
 
@@ -135,6 +139,5 @@ The worker (`app/worker.py`) is a long-running RabbitMQ consumer. On each messag
 3. Validates image quality (blur, contrast, dimensions).
 4. Chunks the extracted text and generates embeddings.
 5. Indexes all chunks into Elasticsearch.
-6. Reports processing metrics (duration, quality score, validation failures) to Prometheus.
 
 Run it alongside the API server as a separate process or container.
