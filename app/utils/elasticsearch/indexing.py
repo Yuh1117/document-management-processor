@@ -66,7 +66,7 @@ def build_chunk_document_body(
     doc_name: str | None,
 ) -> dict:
     doc_body: dict = {
-        "chunk_id": f"{doc_id}_{chunk_index}",
+        "chunk_id": f"{doc_id}_{chunk_index + 1}",
         "document_id": str(doc_id),
         "owner_id": str(owner_id) if owner_id is not None else None,
         "content": chunk,
