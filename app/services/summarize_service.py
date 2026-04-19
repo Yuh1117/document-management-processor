@@ -119,7 +119,7 @@ class SummarizeService:
             model = mlflow.pyfunc.load_model(MLFLOW_SUMMARIZE_MODEL_URI)
             metadata = model.metadata.metadata or {}
             self.model_name = metadata.get("model_name")
-            logger.info("Loaded MLflow model: %s (prompt %s)", self.model_name)
+            logger.info("Loaded MLflow model: %s", self.model_name)
             return model
         except Exception as e:
             self.model_name = GEMINI_MODEL_NAME

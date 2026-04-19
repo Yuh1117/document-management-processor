@@ -7,6 +7,7 @@ from app.core.config import (
     FULL_TEXT_QUERY_FILE,
     HYBRID_QUERY_FILE,
     SEMANTIC_QUERY_FILE,
+    SEARCH_MIN_SCORE,
 )
 from app.core.es import es_client
 from app.models.search import SearchMode, SearchHit
@@ -75,6 +76,8 @@ class SearchQueryBuilder:
         filters: list[dict],
         mode: SearchMode,
     ) -> dict[str, Any]:
+        if SEARCH_MIN_SCORE is not None:
+            body["min_score"] = SEARCH_MIN_SCORE
         self.apply_knn(body, query_vector, knn_k, filters)
 
         if mode == SearchMode.HYBRID:

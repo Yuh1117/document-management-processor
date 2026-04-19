@@ -38,9 +38,17 @@ DOC_MIME = "application/msword"
 TXT_MIME = "text/plain"
 PDF_MIME = "application/pdf"
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-XLS_MIME  = "application/vnd.ms-excel"
+XLS_MIME = "application/vnd.ms-excel"
 
-SUPPORTED_TYPES = ("image/*", PDF_MIME, TXT_MIME, DOC_MIME, DOCX_MIME, XLSX_MIME, XLS_MIME)
+SUPPORTED_TYPES = (
+    "image/*",
+    PDF_MIME,
+    TXT_MIME,
+    DOC_MIME,
+    DOCX_MIME,
+    XLSX_MIME,
+    XLS_MIME,
+)
 
 MIME_TO_EXT: dict[str, str] = {
     "image/png": "png",
@@ -56,6 +64,7 @@ MIME_TO_EXT: dict[str, str] = {
 
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif", ".webp")
 TEXT_FILE_ENCODINGS = ("utf-8", "utf-8-sig", "cp1258", "latin-1")
+PDF_MIN_CHARS_PER_PAGE = 50
 
 
 class ImageTooBlurryError(Exception):
@@ -95,9 +104,9 @@ def resolve_content_type(file_path: str, file_type: str) -> str:
         return "pdf"
     if ft.startswith("image/") or lp.endswith(IMAGE_EXTENSIONS):
         return "image"
-    if XLSX_MIME in ft or lp.endswith(".xlsx"): 
+    if XLSX_MIME in ft or lp.endswith(".xlsx"):
         return "xlsx"
-    if XLS_MIME in ft  or lp.endswith(".xls"):  
+    if XLS_MIME in ft or lp.endswith(".xls"):
         return "xls"
     return "unsupported"
 
@@ -299,24 +308,34 @@ class FileValidator:
                 )
             ]
 
-        if doc.page_count == 0:
-            doc.close()
-            return [
-                ValidationCheck(
-                    name="integrity", passed=False, message="PDF has no pages"
-                )
-            ]
+        with doc:
+            if doc.page_count == 0:
+                return [
+                    ValidationCheck(
+                        name="integrity", passed=False, message="PDF has no pages"
+                    )
+                ]
 
-        pages = range(len(doc)) if VALIDATE_ALL_PDF_PAGES else range(min(1, len(doc)))
-        checks: list[ValidationCheck] = []
-        for i in pages:
-            checks.extend(
-                self.analyzer.image_quality_checks(
-                    self.analyzer.page_to_bgr(doc, i), label=f"Page {i + 1}"
-                )
+            if self._pdf_has_native_text(doc):
+                return []
+
+            pages = (
+                range(len(doc)) if VALIDATE_ALL_PDF_PAGES else range(min(1, len(doc)))
             )
-        doc.close()
-        return checks
+            checks: list[ValidationCheck] = []
+            for i in pages:
+                checks.extend(
+                    self.analyzer.image_quality_checks(
+                        self.analyzer.page_to_bgr(doc, i), label=f"Page {i + 1}"
+                    )
+                )
+            return checks
+
+    def _pdf_has_native_text(self, doc: fitz.Document) -> bool:
+        total_chars = sum(
+            len(doc.load_page(i).get_text("text").strip()) for i in range(len(doc))
+        )
+        return total_chars >= len(doc) * PDF_MIN_CHARS_PER_PAGE
 
     @staticmethod
     def check_docx(path: str) -> list[ValidationCheck]:
@@ -337,14 +356,20 @@ class FileValidator:
                 ValidationCheck(name="integrity", passed=False, message="File is empty")
             ]
         return []
-    
+
     @staticmethod
     def check_spreadsheet(path: str) -> list[ValidationCheck]:
         try:
             pd.read_excel(path, nrows=1)
             return []
         except Exception as exc:
-            return [ValidationCheck(name="integrity", passed=False, message=f"Spreadsheet corrupt: {exc}")]
+            return [
+                ValidationCheck(
+                    name="integrity",
+                    passed=False,
+                    message=f"Spreadsheet corrupt: {exc}",
+                )
+            ]
 
 
 class TextExtractor:
@@ -388,10 +413,22 @@ class TextExtractor:
         return self.analyzer.ocr_file(file_path)
 
     def extract_pdf(self, file_path: str) -> str:
+        native_text = self._extract_pdf_native(file_path)
+        if native_text:
+            return native_text
+        logger.info("No native text found in PDF, falling back to OCR: %s", file_path)
         pages = self.analyzer.pdf_to_bgr_pages(file_path)
         if not pages:
             return ""
         return "\n".join(self.analyzer.ocr_array(p) for p in pages).strip()
+
+    def _extract_pdf_native(self, file_path: str) -> str:
+        with fitz.open(file_path) as doc:
+            page_texts = [doc.load_page(i).get_text("text") for i in range(len(doc))]
+        total_chars = sum(len(t.strip()) for t in page_texts)
+        if total_chars < len(page_texts) * PDF_MIN_CHARS_PER_PAGE:
+            return ""
+        return "\n".join(t.strip() for t in page_texts if t.strip())
 
     def extract_doc(self, file_path: str) -> str:
         soffice = shutil.which("soffice")
@@ -429,7 +466,7 @@ class TextExtractor:
             ) from exc
         finally:
             shutil.rmtree(out_dir, ignore_errors=True)
-    
+
     def extract_spreadsheet(self, file_path: str) -> str:
         sheets = pd.read_excel(file_path, sheet_name=None)
         lines = []
@@ -453,7 +490,7 @@ class ExtractionService:
         self.downloader = FileDownloader(temp_dir)
         self.extractor = TextExtractor(analyzer, temp_dir)
         self.validator = FileValidator(analyzer)
-    
+
     def is_supported(self, file_type: str) -> bool:
         return resolve_content_type("", file_type) != "unsupported"
 

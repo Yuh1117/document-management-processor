@@ -1,6 +1,7 @@
 import json
 import logging
 import mlflow.pyfunc
+import pandas as pd
 from google import genai
 from app.core.config import GEMINI_API_KEY
 
@@ -43,7 +44,7 @@ class GeminiSummarizer(mlflow.pyfunc.PythonModel):
         self.client = genai.Client(api_key=GEMINI_API_KEY)
         logger.info("GeminiSummarizer loaded: model=%s", self.model_name)
 
-    def predict(self, context, model_input):
+    def predict(self, context, model_input: pd.DataFrame) -> str:
         if hasattr(model_input, "to_dict"):
             row = model_input.iloc[0].to_dict()
         elif isinstance(model_input, dict):
