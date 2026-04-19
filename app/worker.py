@@ -1,6 +1,7 @@
 import json
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 import pika
@@ -62,9 +63,15 @@ class DocumentMessage:
 class StatusPublisher:
     """Publishes processing-status updates to the result queue."""
 
-    def __init__(self, channel, queue: str = RABBITMQ_PROCESSING_RESULT_QUEUE) -> None:
-        self._ch = channel
-        self._queue = queue
+    def __init__(
+        self,
+        connection: pika.BlockingConnection,
+        channel,
+        queue: str = RABBITMQ_PROCESSING_RESULT_QUEUE,
+    ) -> None:
+        self.conn = connection
+        self.ch = channel
+        self.queue = queue
 
     def publish(
         self,
@@ -82,24 +89,34 @@ class StatusPublisher:
             payload["extractedText"] = extracted_text
         if processing_metrics is not None:
             payload["processingMetrics"] = processing_metrics
-        try:
-            self._ch.basic_publish(
-                exchange="",
-                routing_key=self._queue,
-                body=json.dumps(payload),
-                properties=pika.BasicProperties(
-                    delivery_mode=2,
-                    content_type="application/json",
-                ),
-            )
-        except Exception as exc:
-            logger.warning(
-                "Status publish failed doc_id=%s status=%s: %s", doc_id, status, exc
-            )
+        body = json.dumps(payload)
 
-    def completed(self, doc_id: int, extracted_text: str, processing_metrics: str) -> None:
+        def _do_publish():
+            try:
+                self.ch.basic_publish(
+                    exchange="",
+                    routing_key=self.queue,
+                    body=body,
+                    properties=pika.BasicProperties(
+                        delivery_mode=2,
+                        content_type="application/json",
+                    ),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Status publish failed doc_id=%s status=%s: %s", doc_id, status, exc
+                )
+
+        self.conn.add_callback_threadsafe(_do_publish)
+
+    def completed(
+        self, doc_id: int, extracted_text: str, processing_metrics: str
+    ) -> None:
         self.publish(
-            doc_id, "COMPLETED", extracted_text=extracted_text, processing_metrics=processing_metrics
+            doc_id,
+            "COMPLETED",
+            extracted_text=extracted_text,
+            processing_metrics=processing_metrics,
         )
 
     def failed(
@@ -125,6 +142,9 @@ class StatusPublisher:
         self.publish(doc_id, "PROCESSING")
 
 
+WORKER_THREADS = 4
+
+
 class DocumentProcessor:
     def __init__(
         self,
@@ -135,16 +155,24 @@ class DocumentProcessor:
         self.embedding = embedding
         self.extraction = extraction
         self.monitoring = monitoring or text_quality_service
+        self._executor = ThreadPoolExecutor(max_workers=WORKER_THREADS)
 
-    def process_message(self, ch, method, properties, body) -> None:
+    def process_message(self, connection, ch, method, _properties, body) -> None:
         try:
             doc = DocumentMessage.from_body(body)
         except (UnicodeDecodeError, json.JSONDecodeError, TypeError, KeyError) as exc:
             logger.warning("Skipping invalid queue message: %s", exc)
-            ch.basic_ack(delivery_tag=method.delivery_tag)
+            connection.add_callback_threadsafe(
+                lambda: ch.basic_ack(delivery_tag=method.delivery_tag)
+            )
             return
 
-        publisher = StatusPublisher(ch)
+        publisher = StatusPublisher(connection, ch)
+        self._executor.submit(
+            self._process_in_thread, connection, ch, method, doc, publisher
+        )
+
+    def _process_in_thread(self, connection, ch, method, doc, publisher) -> None:
         t0 = time.monotonic()
         temp_path: str | None = None
 
@@ -159,7 +187,9 @@ class DocumentProcessor:
             PROCESSING_DURATION.observe(time.monotonic() - t0)
             if temp_path:
                 self.extraction.cleanup_temp(temp_path)
-            ch.basic_ack(delivery_tag=method.delivery_tag)
+            connection.add_callback_threadsafe(
+                lambda: ch.basic_ack(delivery_tag=method.delivery_tag)
+            )
 
     def process(
         self, doc: DocumentMessage, publisher: StatusPublisher, temp_path_ref: list
@@ -169,7 +199,9 @@ class DocumentProcessor:
         )
 
         if not self.extraction.is_supported(doc.file_type):
-            logger.warning("Unsupported file type doc_id=%s type=%s", doc.doc_id, doc.file_type)
+            logger.warning(
+                "Unsupported file type doc_id=%s type=%s", doc.doc_id, doc.file_type
+            )
             DOCS_PROCESSED.labels(status="failed").inc()
             publisher.failed(doc.doc_id, f"Unsupported file type: {doc.file_type}")
             return
@@ -225,9 +257,7 @@ class DocumentProcessor:
 
         if not raw_text.strip():
             logger.warning("Produced no text doc_id=%s", doc.doc_id)
-            publisher.failed(
-                doc.doc_id, "Could not extract content (Produced no text)"
-            )
+            publisher.failed(doc.doc_id, "Could not extract content (Produced no text)")
             DOCS_PROCESSED.labels(status="failed").inc()
             return None
 
@@ -301,19 +331,31 @@ def main() -> None:
         ELASTICSEARCH_INDEX,
     )
 
-    processor = DocumentProcessor(embedding_service, extraction_service, text_quality_service)
+    processor = DocumentProcessor(
+        embedding_service, extraction_service, text_quality_service
+    )
 
     params = pika.URLParameters(RABBITMQ_URL)
+    params.heartbeat = 600
+    params.blocked_connection_timeout = 300
     connection = pika.BlockingConnection(params)
     channel = connection.channel()
     channel.queue_declare(queue=RABBITMQ_DOCUMENT_QUEUE, durable=True)
     channel.queue_declare(queue=RABBITMQ_PROCESSING_RESULT_QUEUE, durable=True)
-    channel.basic_qos(prefetch_count=1)
+    channel.basic_qos(prefetch_count=WORKER_THREADS)
     channel.basic_consume(
-        queue=RABBITMQ_DOCUMENT_QUEUE, on_message_callback=processor.process_message
+        queue=RABBITMQ_DOCUMENT_QUEUE,
+        on_message_callback=lambda ch, method, props, body: processor.process_message(
+            connection, ch, method, props, body
+        ),
     )
 
-    logger.info("Consuming messages on %s (prefetch=1)", RABBITMQ_DOCUMENT_QUEUE)
+    logger.info(
+        "Consuming messages on %s (prefetch=%s, threads=%s)",
+        RABBITMQ_DOCUMENT_QUEUE,
+        WORKER_THREADS,
+        WORKER_THREADS,
+    )
     channel.start_consuming()
 
 
