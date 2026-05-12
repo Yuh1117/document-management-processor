@@ -16,6 +16,9 @@ from app.services.embedding_service import EmbeddingService, embedding_service
 logger = logging.getLogger(__name__)
 
 
+SNIPPET_MAX_CHARS = 320
+
+
 class SearchQueryBuilder:
     TEMPLATE_PATHS = {
         SearchMode.FULL_TEXT: FULL_TEXT_QUERY_FILE,
@@ -62,8 +65,7 @@ class SearchQueryBuilder:
     def apply_full_text(
         self, body: dict[str, Any], query: str, filters: list[dict]
     ) -> dict[str, Any]:
-        clause = body["query"]["bool"]["must"][0]
-        self.set_text_clause(clause, query, context="full_text")
+        self.set_text_clauses(body, query, context="full_text")
         body["query"]["bool"]["filter"] = filters
         return body
 
@@ -82,8 +84,7 @@ class SearchQueryBuilder:
 
         if mode == SearchMode.HYBRID:
             body["query"]["bool"]["filter"] = filters
-            clause = body["query"]["bool"]["should"][0]
-            self.set_text_clause(clause, query, context="hybrid")
+            self.set_text_clauses(body, query, context="hybrid")
 
         return body
 
@@ -110,20 +111,29 @@ class SearchQueryBuilder:
         knn["filter"]["bool"]["filter"] = filters
 
     @staticmethod
-    def set_text_clause(clause: dict[str, Any], query: str, context: str) -> None:
-        if "multi_match" in clause:
-            clause["multi_match"]["query"] = query
+    def set_text_clauses(body: dict[str, Any], query: str, context: str) -> None:
+        bool_query = body.get("query", {}).get("bool", {})
+        clauses = bool_query.get("must", []) + bool_query.get("should", [])
+        matched = False
+
+        for clause in clauses:
+            if "multi_match" in clause:
+                clause["multi_match"]["query"] = query
+                matched = True
+
+        for clause in clauses:
+            if "match" in clause:
+                value = clause["match"].get("content")
+                if isinstance(value, dict):
+                    value["query"] = query
+                else:
+                    clause["match"]["content"] = query
+                matched = True
+
+        if matched:
             return
 
-        if "match" in clause:
-            value = clause["match"].get("content")
-            if isinstance(value, dict):
-                value["query"] = query
-            else:
-                clause["match"]["content"] = query
-            return
-
-        raise KeyError(f"Unsupported {context} template: expected match or multi_match")
+        raise KeyError(f"Unsupported {context} template: missing text query clause")
 
 
 class SearchResponseParser:
@@ -133,9 +143,26 @@ class SearchResponseParser:
             SearchHit(
                 document_id=hit["_source"]["document_id"],
                 score=hit["_score"],
+                snippet=SearchResponseParser.snippet(hit),
             )
             for hit in resp["hits"]["hits"]
         ]
+
+    @staticmethod
+    def snippet(hit: dict[str, Any]) -> str | None:
+        highlight = hit.get("highlight") or {}
+        fragments = highlight.get("content")
+        if isinstance(fragments, list) and fragments:
+            return " ... ".join(str(fragment) for fragment in fragments)
+
+        content = (hit.get("_source") or {}).get("content")
+        if not isinstance(content, str):
+            return None
+
+        content = " ".join(content.split())
+        if len(content) <= SNIPPET_MAX_CHARS:
+            return content
+        return f"{content[:SNIPPET_MAX_CHARS].rstrip()}..."
 
     @staticmethod
     def total(resp: dict[str, Any]) -> int:

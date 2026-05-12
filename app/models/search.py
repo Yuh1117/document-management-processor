@@ -19,6 +19,7 @@ class SearchRequest(BaseModel):
 class SearchHit(BaseModel):
     document_id: str
     score: float
+    snippet: str | None = None
 
 
 class SearchResponse(BaseModel):
