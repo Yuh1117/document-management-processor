@@ -1,6 +1,7 @@
 # Virtualenv local
 venv/
-.env
+.env*
+mlflow
 __pycache__/
 *.pyc
 *.pyo

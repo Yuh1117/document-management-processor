@@ -25,5 +25,16 @@
       ],
       "filter": []
     }
+  },
+  "highlight": {
+    "pre_tags": ["<mark>"],
+    "post_tags": ["</mark>"],
+    "fields": {
+      "content": {
+        "fragment_size": 180,
+        "number_of_fragments": 2,
+        "no_match_size": 320
+      }
+    }
   }
 }
