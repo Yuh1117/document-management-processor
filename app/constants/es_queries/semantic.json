@@ -2,7 +2,16 @@
   "from": 0,
   "size": 10,
   "collapse": {
-    "field": "document_id"
+    "field": "document_id",
+    "inner_hits": {
+      "name": "best_chunks",
+      "size": 3,
+      "sort": [
+        {
+          "_score": "desc"
+        }
+      ]
+    }
   },
   "aggs": {
     "unique_document_count": {

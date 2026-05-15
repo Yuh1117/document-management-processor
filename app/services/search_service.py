@@ -7,14 +7,15 @@ from app.core.config import (
     FULL_TEXT_QUERY_FILE,
     HYBRID_QUERY_FILE,
     SEMANTIC_QUERY_FILE,
-    SEARCH_MIN_SCORE,
+    SEARCH_HYBRID_MIN_SCORE,
+    SEARCH_KNN_POOL_SIZE,
+    SEARCH_SEMANTIC_MIN_SCORE,
 )
 from app.core.es import es_client
 from app.models.search import SearchMode, SearchHit
 from app.services.embedding_service import EmbeddingService, embedding_service
 
 logger = logging.getLogger(__name__)
-
 
 SNIPPET_MAX_CHARS = 320
 
@@ -47,9 +48,8 @@ class SearchQueryBuilder:
             return self.apply_full_text(body, query, filters)
 
         query_vector = self.embedding.encode_text(query)
-        return self.apply_vector(
-            body, query, query_vector, offset + page_size, filters, mode
-        )
+        knn_k = SEARCH_KNN_POOL_SIZE
+        return self.apply_vector(body, query, query_vector, knn_k, filters, mode)
 
     def load_template(self, mode: SearchMode) -> dict[str, Any]:
         path = self.TEMPLATE_PATHS[mode]
@@ -78,8 +78,9 @@ class SearchQueryBuilder:
         filters: list[dict],
         mode: SearchMode,
     ) -> dict[str, Any]:
-        if SEARCH_MIN_SCORE is not None:
-            body["min_score"] = SEARCH_MIN_SCORE
+        min_score = self.min_score(mode)
+        if min_score is not None:
+            body["min_score"] = min_score
         self.apply_knn(body, query_vector, knn_k, filters)
 
         if mode == SearchMode.HYBRID:
@@ -87,6 +88,12 @@ class SearchQueryBuilder:
             self.set_text_clauses(body, query, context="hybrid")
 
         return body
+
+    @staticmethod
+    def min_score(mode: SearchMode) -> float | None:
+        if mode == SearchMode.HYBRID:
+            return SEARCH_HYBRID_MIN_SCORE
+        return SEARCH_SEMANTIC_MIN_SCORE
 
     @staticmethod
     def apply_knn(
@@ -123,12 +130,12 @@ class SearchQueryBuilder:
 
         for clause in clauses:
             if "match" in clause:
-                value = clause["match"].get("content")
-                if isinstance(value, dict):
-                    value["query"] = query
-                else:
-                    clause["match"]["content"] = query
-                matched = True
+                for field, value in clause["match"].items():
+                    if isinstance(value, dict):
+                        value["query"] = query
+                    else:
+                        clause["match"][field] = query
+                    matched = True
 
         if matched:
             return
@@ -142,7 +149,7 @@ class SearchResponseParser:
         return [
             SearchHit(
                 document_id=hit["_source"]["document_id"],
-                score=hit["_score"],
+                score=hit.get("_score") or 0.0,
                 snippet=SearchResponseParser.snippet(hit),
             )
             for hit in resp["hits"]["hits"]
@@ -150,12 +157,39 @@ class SearchResponseParser:
 
     @staticmethod
     def snippet(hit: dict[str, Any]) -> str | None:
+        inner_snippet = SearchResponseParser.inner_hit_snippet(hit)
+        if inner_snippet:
+            return inner_snippet
+
+        return SearchResponseParser.content_snippet(hit)
+
+    @staticmethod
+    def inner_hit_snippet(hit: dict[str, Any]) -> str | None:
+        for chunk in SearchResponseParser.inner_hits(hit):
+            snippet = SearchResponseParser.highlight_snippet(chunk)
+            if snippet:
+                return snippet
+
+        return None
+
+    @staticmethod
+    def inner_hits(hit: dict[str, Any]) -> list[dict[str, Any]]:
+        inner_hits = hit.get("inner_hits") or {}
+        best_chunks = inner_hits.get("best_chunks") or {}
+        chunks = best_chunks.get("hits", {}).get("hits", [])
+        return chunks if isinstance(chunks, list) else []
+
+    @staticmethod
+    def highlight_snippet(hit: dict[str, Any]) -> str | None:
         highlight = hit.get("highlight") or {}
         fragments = highlight.get("content")
         if isinstance(fragments, list) and fragments:
-            return " ... ".join(str(fragment) for fragment in fragments)
+            return " ... ".join(str(f) for f in fragments)
+        return None
 
-        content = (hit.get("_source") or {}).get("content")
+    @staticmethod
+    def content_snippet(hit: dict[str, Any]) -> str | None:
+        content = SearchResponseParser.content(hit)
         if not isinstance(content, str):
             return None
 
@@ -163,6 +197,11 @@ class SearchResponseParser:
         if len(content) <= SNIPPET_MAX_CHARS:
             return content
         return f"{content[:SNIPPET_MAX_CHARS].rstrip()}..."
+
+    @staticmethod
+    def content(hit: dict[str, Any]) -> str | None:
+        content = (hit.get("_source") or {}).get("content")
+        return content if isinstance(content, str) else None
 
     @staticmethod
     def total(resp: dict[str, Any]) -> int:
@@ -192,9 +231,16 @@ class SearchService:
     ) -> tuple[list[SearchHit], int]:
         try:
             es = es_client.get_client()
+
             body = self.builder.build(query, page, page_size, owner_id, mode)
             resp = es.search(index=ELASTICSEARCH_INDEX, body=body)
-            return self.parser.hits(resp), self.parser.total(resp)
+            total = self.parser.total(resp)
+
+            if not resp["hits"]["hits"]:
+                return [], total
+
+            return self.parser.hits(resp), total
+
         except Exception as exc:
             logger.error("Search failed: %s", exc)
             raise HTTPException(status_code=502, detail=f"Elasticsearch error: {exc}")
