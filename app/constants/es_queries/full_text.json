@@ -2,7 +2,27 @@
   "from": 0,
   "size": 10,
   "collapse": {
-    "field": "document_id"
+    "field": "document_id",
+    "inner_hits": {
+      "name": "best_chunks",
+      "size": 3,
+      "sort": [
+        {
+          "_score": "desc"
+        }
+      ],
+      "highlight": {
+        "pre_tags": ["<mark>"],
+        "post_tags": ["</mark>"],
+        "fields": {
+          "content": {
+            "fragment_size": 180,
+            "number_of_fragments": 3,
+            "no_match_size": 320
+          }
+        }
+      }
+    }
   },
   "aggs": {
     "unique_document_count": {
@@ -16,25 +36,25 @@
     "bool": {
       "must": [
         {
-          "multi_match": {
-            "query": "",
-            "fields": ["name^3", "content^1"],
-            "type": "best_fields"
+          "match": {
+            "content": {
+              "query": "",
+              "boost": 1.0
+            }
+          }
+        }
+      ],
+      "should": [
+        {
+          "match": {
+            "name": {
+              "query": "",
+              "boost": 1.2
+            }
           }
         }
       ],
       "filter": []
-    }
-  },
-  "highlight": {
-    "pre_tags": ["<mark>"],
-    "post_tags": ["</mark>"],
-    "fields": {
-      "content": {
-        "fragment_size": 180,
-        "number_of_fragments": 2,
-        "no_match_size": 320
-      }
     }
   }
 }
