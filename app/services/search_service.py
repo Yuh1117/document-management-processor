@@ -2,22 +2,21 @@ import logging
 import json
 from typing import Any
 from fastapi import HTTPException
-from app.core.config import (
-    ELASTICSEARCH_INDEX,
+from app.core.config import ELASTICSEARCH_INDEX
+from app.constants.defaults import (
     FULL_TEXT_QUERY_FILE,
     HYBRID_QUERY_FILE,
-    SEMANTIC_QUERY_FILE,
     SEARCH_HYBRID_MIN_SCORE,
     SEARCH_KNN_POOL_SIZE,
     SEARCH_SEMANTIC_MIN_SCORE,
+    SEMANTIC_QUERY_FILE,
+    SNIPPET_MAX_CHARS,
 )
 from app.core.es import es_client
 from app.models.search import SearchMode, SearchHit
 from app.services.embedding_service import EmbeddingService, embedding_service
 
 logger = logging.getLogger(__name__)
-
-SNIPPET_MAX_CHARS = 320
 
 
 class SearchQueryBuilder:

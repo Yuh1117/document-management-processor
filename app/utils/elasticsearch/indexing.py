@@ -1,7 +1,8 @@
 import logging
 from typing import Any
 
-from app.core.config import CHUNK_OVERLAP, CHUNK_SIZE, ELASTICSEARCH_INDEX
+from app.core.config import ELASTICSEARCH_INDEX
+from app.constants.defaults import CHUNK_OVERLAP, CHUNK_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -16,9 +17,7 @@ def index_all_chunks(
 ) -> None:
     for i, chunk in enumerate(chunks):
         vector = embedding.encode_text(chunk)
-        body = build_chunk_document_body(
-            doc_id, i, chunk, vector, owner_id, doc_name
-        )
+        body = build_chunk_document_body(doc_id, i, chunk, vector, owner_id, doc_name)
         es.index(
             index=ELASTICSEARCH_INDEX,
             id=f"{doc_id}_{i + 1}",

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import unicodedata
 
-from app.core.config import TEXT_MAX_INVALID_CHAR_RATIO, TEXT_MIN_QUALITY_SCORE
+from app.constants.defaults import TEXT_MAX_INVALID_CHAR_RATIO, TEXT_MIN_QUALITY_SCORE
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,9 @@ class TextQualityService:
             )
 
         if alerts:
-            logger.warning("Text quality alert doc_id=%s: %s", doc_id, "; ".join(alerts))
+            logger.warning(
+                "Text quality alert doc_id=%s: %s", doc_id, "; ".join(alerts)
+            )
         return bool(alerts)
 
     @staticmethod

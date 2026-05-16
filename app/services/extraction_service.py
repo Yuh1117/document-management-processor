@@ -19,52 +19,32 @@ from app.core.config import (
     AWS_S3_ACCESS_KEY,
     AWS_S3_REGION,
     AWS_S3_SECRET_KEY,
+    OCR_USE_GPU,
+)
+from app.constants.defaults import (
     LAPLACIAN_VAR_THRESHOLD,
     MIN_CONTRAST_THRESHOLD,
     MIN_IMAGE_HEIGHT,
     MIN_IMAGE_WIDTH,
-    OCR_USE_GPU,
     TEMP_DIR,
     VALIDATE_ALL_PDF_PAGES,
+)
+from app.constants.defaults import (
+    DOCX_MIME,
+    DOC_MIME,
+    IMAGE_EXTENSIONS,
+    MIME_TO_EXT,
+    PDF_MIN_CHARS_PER_PAGE,
+    TEXT_FILE_ENCODINGS,
+    TXT_MIME,
+    XLSX_MIME,
+    XLS_MIME,
 )
 from app.models.validation import ValidationCheck, ValidationReport
 
 logger = logging.getLogger(__name__)
 
 S3_URI = re.compile(r"^s3://([^/]+)/(.+)$")
-
-DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-DOC_MIME = "application/msword"
-TXT_MIME = "text/plain"
-PDF_MIME = "application/pdf"
-XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-XLS_MIME = "application/vnd.ms-excel"
-
-SUPPORTED_TYPES = (
-    "image/*",
-    PDF_MIME,
-    TXT_MIME,
-    DOC_MIME,
-    DOCX_MIME,
-    XLSX_MIME,
-    XLS_MIME,
-)
-
-MIME_TO_EXT: dict[str, str] = {
-    "image/png": "png",
-    "image/jpeg": "jpg",
-    "image/jpg": "jpg",
-    PDF_MIME: "pdf",
-    DOCX_MIME: "docx",
-    DOC_MIME: "doc",
-    TXT_MIME: "txt",
-    XLSX_MIME: "xlsx",
-    XLS_MIME: "xls",
-}
-
-IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif", ".webp")
-TEXT_FILE_ENCODINGS = ("utf-8", "utf-8-sig", "cp1258", "latin-1")
-PDF_MIN_CHARS_PER_PAGE = 50
 
 
 class ImageTooBlurryError(Exception):

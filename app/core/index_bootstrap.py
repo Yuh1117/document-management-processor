@@ -1,6 +1,7 @@
 import json
 from elasticsearch import Elasticsearch
-from app.core.config import DOCUMENTS_INDEX_MAPPING_FILE, ELASTICSEARCH_INDEX
+from app.core.config import ELASTICSEARCH_INDEX
+from app.constants.defaults import DOCUMENTS_INDEX_MAPPING_FILE
 from app.core.es import es_client
 
 

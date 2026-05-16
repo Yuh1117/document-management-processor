@@ -16,11 +16,10 @@ from app.core.config import (
     MLFLOW_TRACKING_URI,
     SUMMARIZE_PROMPT_VERSION,
 )
+from app.constants.defaults import DEFAULT_LANG
 from app.utils.mlflow.gemini_summarizer import PROMPTS
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_LANG = "vi"
 
 mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
 
