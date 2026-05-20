@@ -91,42 +91,35 @@ docker run --env-file .env -p 8000:8000 dms-processor
 
 All configuration is via environment variables:
 
-| Variable | Description |
-|---|---|
-| `RABBITMQ_URL` | RabbitMQ connection URL |
-| `RABBITMQ_DOCUMENT_PROCESS_QUEUE` | Queue name for incoming document events |
-| `RABBITMQ_DOCUMENT_RESULT_QUEUE` | Queue name for processing result events |
-| `ELASTICSEARCH_HOST` | Elasticsearch host URL |
-| `ELASTICSEARCH_INDEX` | Index name for documents |
-| `BACKEND_BASE_URL` | Base URL of the Spring Boot backend |
-| `AWS_S3_ACCESS_KEY` | S3 access key |
-| `AWS_S3_SECRET_KEY` | S3 secret key |
-| `AWS_S3_REGION` | S3 region |
-| `TEMP_DIR` | Temporary directory for downloaded files |
-| `SENTENCE_TRANSFORMER_MODEL_NAME` | HuggingFace model name for embeddings |
-| `GEMINI_API_KEY` | Google Gemini API key |
-| `GEMINI_MODEL_NAME` | Gemini model name (e.g. `gemini-3.0-flash`) |
-| `SUMMARIZE_PROMPT_VERSION` | MLflow prompt version tag |
-| `MLFLOW_TRACKING_URI` | MLflow tracking server URI |
-| `MLFLOW_REGISTERED_MODEL_NAME` | Registered MLflow model name for summarization |
-| `CHUNK_SIZE` | Token chunk size for indexing (default: `250`) |
-| `CHUNK_OVERLAP` | Token overlap between chunks (default: `50`) |
-| `LAPLACIAN_VAR_THRESHOLD` | Blur detection threshold (default: `100.0`) |
-| `MIN_IMAGE_WIDTH` | Minimum image width for OCR (default: `150`) |
-| `MIN_IMAGE_HEIGHT` | Minimum image height for OCR (default: `150`) |
-| `MIN_CONTRAST_THRESHOLD` | Minimum contrast for image quality (default: `15.0`) |
-| `TEXT_MIN_QUALITY_SCORE` | Minimum text quality score (default: `60`) |
-| `TEXT_MAX_INVALID_CHAR_RATIO` | Max ratio of invalid characters allowed (default: `0.3`) |
+| Variable                          | Description                                               |
+| --------------------------------- | --------------------------------------------------------- |
+| `RABBITMQ_URL`                    | RabbitMQ connection URL                                   |
+| `RABBITMQ_DOCUMENT_PROCESS_QUEUE` | Queue name for incoming document events                   |
+| `RABBITMQ_DOCUMENT_RESULT_QUEUE`  | Queue name for processing result events                   |
+| `ELASTICSEARCH_HOST`              | Elasticsearch host URL                                    |
+| `ELASTICSEARCH_INDEX`             | Index name for documents                                  |
+| `AWS_S3_ACCESS_KEY`               | S3 access key                                             |
+| `AWS_S3_SECRET_KEY`               | S3 secret key                                             |
+| `AWS_S3_REGION`                   | S3 region                                                 |
+| `SENTENCE_TRANSFORMER_MODEL_NAME` | HuggingFace model name for embeddings                     |
+| `GEMINI_API_KEY`                  | Google Gemini API key                                     |
+| `GEMINI_MODEL_NAME`               | Gemini model name (e.g. `gemini-3.0-flash`)               |
+| `SUMMARIZE_PROMPT_VERSION`        | MLflow prompt version tag                                 |
+| `MLFLOW_TRACKING_URI`             | MLflow tracking server URI                                |
+| `MLFLOW_REGISTERED_MODEL_NAME`    | Registered MLflow model name for summarization            |
+| `OCR_USE_GPU`                     | Enable GPU for EasyOCR (`true`/`false`, default: `false`) |
+
+Other tunable values (chunk size, image thresholds, search scores, etc.) are hardcoded in `app/constants/defaults.py`.
 
 ## API endpoints
 
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/search` | Full-text / semantic / hybrid document search |
-| `POST` | `/summarize` | Generate AI summary for a document |
-| `POST` | `/models/reload` | Reload the summarization model from MLflow |
-| `GET` | `/models` | List available summarization models |
-| `DELETE` | `/index/{doc_id}` | Delete all indexed chunks for a document |
+| Method   | Path              | Description                                   |
+| -------- | ----------------- | --------------------------------------------- |
+| `POST`   | `/search`         | Full-text / semantic / hybrid document search |
+| `POST`   | `/summarize`      | Generate AI summary for a document            |
+| `POST`   | `/models/reload`  | Reload the summarization model from MLflow    |
+| `GET`    | `/models`         | List available summarization models           |
+| `DELETE` | `/index/{doc_id}` | Delete all indexed chunks for a document      |
 
 API docs are available at `http://localhost:8000/docs` when the server is running.
 

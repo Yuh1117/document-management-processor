@@ -3,6 +3,7 @@ import logging
 import mlflow.pyfunc
 import pandas as pd
 from google import genai
+from app.constants.defaults import DEFAULT_LANG
 from app.core.config import GEMINI_API_KEY
 
 logger = logging.getLogger(__name__)
@@ -29,8 +30,6 @@ PROMPTS = {
         "Content to summarize:\n---\n{text}\n---\n\nSummary:"
     ),
 }
-
-DEFAULT_LANG = "vi"
 
 
 class GeminiSummarizer(mlflow.pyfunc.PythonModel):

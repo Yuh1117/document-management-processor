@@ -29,6 +29,7 @@ from app.services.extraction_service import (
     ExtractionService,
     extraction_service,
 )
+from app.constants.defaults import WORKER_THREADS
 from app.utils.elasticsearch.indexing import (
     chunk_text,
     delete_all_chunks_for_document,
@@ -140,9 +141,6 @@ class StatusPublisher:
 
     def processing(self, doc_id: int) -> None:
         self.publish(doc_id, "PROCESSING")
-
-
-WORKER_THREADS = 4
 
 
 class DocumentProcessor:
