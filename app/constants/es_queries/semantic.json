@@ -1,11 +1,14 @@
 {
   "from": 0,
   "size": 10,
+  "track_total_hits": false,
+  "_source": ["document_id", "name", "content", "page", "chunk_index"],
   "collapse": {
     "field": "document_id",
     "inner_hits": {
       "name": "best_chunks",
       "size": 3,
+      "_source": ["content", "page", "chunk_index"],
       "sort": [
         {
           "_score": "desc"
