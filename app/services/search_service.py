@@ -5,7 +5,11 @@ from typing import Any
 from fastapi import HTTPException
 from app.constants.defaults import (
     FULL_TEXT_QUERY_FILE,
+    SEARCH_CANDIDATE_MULTIPLIER,
+    SEARCH_DEFAULT_CANDIDATE_SIZE,
     SEARCH_KNN_POOL_SIZE,
+    SEARCH_MAX_CANDIDATE_SIZE,
+    SEARCH_RRF_K,
     SEARCH_SEMANTIC_MIN_SCORE,
     SEMANTIC_QUERY_FILE,
     SNIPPET_MAX_CHARS,
@@ -16,11 +20,6 @@ from app.models.search import SearchHit, SearchMode
 from app.services.embedding_service import EmbeddingService, embedding_service
 
 logger = logging.getLogger(__name__)
-
-RRF_K = 60
-DEFAULT_CANDIDATE_SIZE = 100
-CANDIDATE_MULTIPLIER = 10
-MAX_CANDIDATE_SIZE = 1000
 
 
 @dataclass
@@ -144,17 +143,17 @@ class SearchQueryBuilder:
     def candidate_size(
         page: int,
         page_size: int,
-        minimum: int = DEFAULT_CANDIDATE_SIZE,
+        minimum: int = SEARCH_DEFAULT_CANDIDATE_SIZE,
     ) -> int:
         page = max(page, 1)
         page_size = max(page_size, 1)
 
         size = max(
             minimum,
-            page * page_size * CANDIDATE_MULTIPLIER,
+            page * page_size * SEARCH_CANDIDATE_MULTIPLIER,
         )
 
-        return min(size, MAX_CANDIDATE_SIZE)
+        return min(size, SEARCH_MAX_CANDIDATE_SIZE)
 
     @staticmethod
     def apply_knn(
@@ -295,7 +294,7 @@ class SearchResponseParser:
 class RRFMerger:
     @staticmethod
     def rrf_score(rank: int) -> float:
-        return 1.0 / (RRF_K + rank)
+        return 1.0 / (SEARCH_RRF_K + rank)
 
     def merge(
         self,
@@ -460,6 +459,7 @@ class SearchService:
         candidate_size = self.builder.candidate_size(
             page=page,
             page_size=page_size,
+            minimum=SEARCH_DEFAULT_CANDIDATE_SIZE,
         )
 
         bm25_body = self.builder.build_full_text_candidate(
