@@ -292,7 +292,7 @@ class DocumentProcessor:
             )
         except Exception as exc:
             logger.error("Elasticsearch indexing failed doc_id=%s: %s", doc.doc_id, exc)
-            DOCS_PROCESSED.labels(status="index_failed").inc()
+            DOCS_PROCESSED.labels(status="failed").inc()
             publisher.publish(
                 doc.doc_id,
                 "FAILED",
@@ -323,6 +323,8 @@ class DocumentProcessor:
 def main() -> None:
     start_metrics_server(8001)
     logger.info("Prometheus metrics server started on :8001")
+    for status in ("completed", "failed"):
+        DOCS_PROCESSED.labels(status=status)
     logger.info(
         "Worker starting queue=%s index=%s",
         RABBITMQ_DOCUMENT_QUEUE,
