@@ -30,15 +30,11 @@ from app.constants.defaults import (
     VALIDATE_ALL_PDF_PAGES,
 )
 from app.constants.defaults import (
-    DOCX_MIME,
-    DOC_MIME,
-    IMAGE_EXTENSIONS,
+    EXT_TO_CONTENT_TYPE,
+    MIME_TO_CONTENT_TYPE,
     MIME_TO_EXT,
     PDF_MIN_CHARS_PER_PAGE,
     TEXT_FILE_ENCODINGS,
-    TXT_MIME,
-    XLSX_MIME,
-    XLS_MIME,
 )
 from app.models.validation import ValidationCheck, ValidationReport
 
@@ -73,22 +69,13 @@ def suffix_for_type(file_type: str) -> str:
 
 def resolve_content_type(file_path: str, file_type: str) -> str:
     ft = (file_type or "").lower()
-    lp = file_path.lower()
-    if TXT_MIME in ft or lp.endswith(".txt"):
-        return "txt"
-    if DOCX_MIME in ft or lp.endswith(".docx"):
-        return "docx"
-    if DOC_MIME in ft or lp.endswith(".doc"):
-        return "doc"
-    if "pdf" in ft or lp.endswith(".pdf"):
-        return "pdf"
-    if ft.startswith("image/") or lp.endswith(IMAGE_EXTENSIONS):
+    if ft.startswith("image/"):
         return "image"
-    if XLSX_MIME in ft or lp.endswith(".xlsx"):
-        return "xlsx"
-    if XLS_MIME in ft or lp.endswith(".xls"):
-        return "xls"
-    return "unsupported"
+    for mime, content_type in MIME_TO_CONTENT_TYPE.items():
+        if mime in ft:
+            return content_type
+    ext = os.path.splitext(file_path.lower())[1]
+    return EXT_TO_CONTENT_TYPE.get(ext, "unsupported")
 
 
 class FileDownloader:
