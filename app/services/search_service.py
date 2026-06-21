@@ -456,21 +456,15 @@ class SearchService:
     ) -> tuple[list[SearchHit], int]:
         es = es_client.get_client()
 
-        candidate_size = self.builder.candidate_size(
-            page=page,
-            page_size=page_size,
-            minimum=SEARCH_DEFAULT_CANDIDATE_SIZE,
-        )
-
         bm25_body = self.builder.build_full_text_candidate(
             query=query,
-            candidate_size=candidate_size,
+            candidate_size=SEARCH_MAX_CANDIDATE_SIZE,
             owner_id=owner_id,
         )
 
         semantic_body = self.builder.build_semantic_candidate(
             query=query,
-            candidate_size=candidate_size,
+            candidate_size=SEARCH_MAX_CANDIDATE_SIZE,
             owner_id=owner_id,
         )
 
