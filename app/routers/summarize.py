@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 
-from app.deps import get_summarize_service
+from app.deps import get_summarize_service, verify_api_key
 from app.models.summarize import (
     ModelInfo,
     ModelsListResponse,
@@ -10,7 +10,7 @@ from app.models.summarize import (
 )
 from app.services.summarize_service import SummarizeService
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(verify_api_key)])
 
 
 @router.post("/summarize", response_model=SummarizeResponse)

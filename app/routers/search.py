@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends
 
-from app.deps import get_search_service
+from app.deps import get_search_service, verify_api_key
 from app.models.search import SearchRequest, SearchResponse
 from app.services.search_service import SearchService
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(verify_api_key)])
 
 
 @router.post("/search", response_model=SearchResponse)
