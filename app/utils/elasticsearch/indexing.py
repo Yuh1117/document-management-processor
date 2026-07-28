@@ -1,6 +1,5 @@
 import logging
 import re
-from typing import Any
 
 from app.core.config import ELASTICSEARCH_INDEX
 from app.constants.defaults import CHUNK_OVERLAP, CHUNK_SIZE
@@ -11,9 +10,9 @@ logger = logging.getLogger(__name__)
 def index_all_chunks(
     es,
     embedding,
-    doc_id: int,
+    doc_id: str,
     chunks: list[str],
-    owner_id: Any,
+    owner_id: str | None,
     doc_name: str | None,
 ) -> None:
     for i, chunk in enumerate(chunks):
@@ -60,7 +59,7 @@ def chunk_text(
     return chunks
 
 
-def delete_all_chunks_for_document(es, doc_id: int) -> None:
+def delete_all_chunks_for_document(es, doc_id: str) -> None:
     try:
         es.delete_by_query(
             index=ELASTICSEARCH_INDEX,
@@ -75,11 +74,11 @@ def delete_all_chunks_for_document(es, doc_id: int) -> None:
 
 
 def build_chunk_document_body(
-    doc_id: int,
+    doc_id: str,
     chunk_index: int,
     chunk: str,
     content_vector: list[float],
-    owner_id: Any,
+    owner_id: str | None,
     doc_name: str | None,
 ) -> dict:
     doc_body: dict = {

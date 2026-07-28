@@ -10,7 +10,7 @@ class ValidationCheck(BaseModel):
 
 
 class ValidationReport(BaseModel):
-    doc_id: int
+    doc_id: str
     file_type: str
     checks: list[ValidationCheck]
     overall_passed: bool

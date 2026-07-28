@@ -23,7 +23,7 @@ class TextQualityService:
             "total_words": len(words),
         }
 
-    def check_quality_alert(self, metrics: dict, doc_id: int) -> bool:
+    def check_quality_alert(self, metrics: dict, doc_id: str) -> bool:
         alerts = []
         if metrics.get("text_quality_score", 0) < TEXT_MIN_QUALITY_SCORE:
             alerts.append(

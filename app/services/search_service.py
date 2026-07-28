@@ -47,7 +47,7 @@ class SearchQueryBuilder:
         query: str,
         page: int,
         page_size: int,
-        owner_id: int | None,
+        owner_id: str | None,
         mode: SearchMode,
     ) -> dict[str, Any]:
         body = self.load_template(mode)
@@ -74,7 +74,7 @@ class SearchQueryBuilder:
         self,
         query: str,
         candidate_size: int,
-        owner_id: int | None,
+        owner_id: str | None,
     ) -> dict[str, Any]:
         body = self.load_template(SearchMode.FULL_TEXT)
         filters = self.owner_filter(owner_id)
@@ -88,7 +88,7 @@ class SearchQueryBuilder:
         self,
         query: str,
         candidate_size: int,
-        owner_id: int | None,
+        owner_id: str | None,
     ) -> dict[str, Any]:
         body = self.load_template(SearchMode.SEMANTIC)
         filters = self.owner_filter(owner_id)
@@ -111,7 +111,7 @@ class SearchQueryBuilder:
             return json.load(f)
 
     @staticmethod
-    def owner_filter(owner_id: int | None) -> list[dict[str, Any]]:
+    def owner_filter(owner_id: str | None) -> list[dict[str, Any]]:
         if owner_id is None:
             return []
         return [{"term": {"owner_id": str(owner_id)}}]
@@ -383,7 +383,7 @@ class SearchService:
     def search(
         self,
         query: str,
-        owner_id: int | None = None,
+        owner_id: str | None = None,
         page: int = 1,
         page_size: int = 10,
         mode: SearchMode = SearchMode.SEMANTIC,
@@ -424,7 +424,7 @@ class SearchService:
     def single_mode_search(
         self,
         query: str,
-        owner_id: int | None,
+        owner_id: str | None,
         page: int,
         page_size: int,
         mode: SearchMode,
@@ -450,7 +450,7 @@ class SearchService:
     def hybrid_search(
         self,
         query: str,
-        owner_id: int | None,
+        owner_id: str | None,
         page: int,
         page_size: int,
     ) -> tuple[list[SearchHit], int]:

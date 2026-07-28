@@ -218,7 +218,7 @@ class FileValidator:
     def __init__(self, analyzer: ImageAnalyzer) -> None:
         self.analyzer = analyzer
 
-    def validate(self, file_path: str, file_type: str, doc_id: int) -> ValidationReport:
+    def validate(self, file_path: str, file_type: str, doc_id: str) -> ValidationReport:
         content_type = resolve_content_type(file_path, file_type)
         checks = self.run_checks(file_path, file_type, content_type)
         overall = not checks or all(c.passed for c in checks)
@@ -464,7 +464,7 @@ class ExtractionService:
     def download_to_temp(self, file_url: str, file_type: str) -> str:
         return self.downloader.download(file_url, file_type)
 
-    def validate(self, file_path: str, file_type: str, doc_id: int) -> ValidationReport:
+    def validate(self, file_path: str, file_type: str, doc_id: str) -> ValidationReport:
         return self.validator.validate(file_path, file_type, doc_id)
 
     def extract_text(self, file_path: str, file_type: str) -> str:

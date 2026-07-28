@@ -3,7 +3,7 @@ from pydantic import BaseModel
 
 class ReindexRequest(BaseModel):
     text: str
-    owner_id: int | None = None
+    owner_id: str | None = None
     name: str | None = None
 
 

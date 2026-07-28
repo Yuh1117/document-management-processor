@@ -10,7 +10,7 @@ class SearchMode(str, Enum):
 
 class SearchRequest(BaseModel):
     query: str
-    owner_id: int | None = None
+    owner_id: str | None = None
     page: int = Field(default=1, ge=1)
     page_size: int = Field(default=10, ge=1, le=100)
     mode: SearchMode = SearchMode.SEMANTIC

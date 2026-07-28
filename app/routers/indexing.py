@@ -10,7 +10,7 @@ router = APIRouter(dependencies=[Depends(verify_api_key)])
 
 
 @router.delete("/index/{doc_id}")
-def delete_document_index(doc_id: int):
+def delete_document_index(doc_id: str):
     es = es_client.get_client()
     delete_all_chunks_for_document(es, doc_id)
     return {"success": True}
