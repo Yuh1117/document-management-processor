@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class DocumentMessage:
-    doc_id: int
+    doc_id: str
     file_url: str
     file_type: str = "application/octet-stream"
     owner_id: str | None = None
@@ -76,7 +76,7 @@ class StatusPublisher:
 
     def publish(
         self,
-        doc_id: int,
+        doc_id: str,
         status: str,
         *,
         processing_report: str | None = None,
@@ -111,7 +111,7 @@ class StatusPublisher:
         self.conn.add_callback_threadsafe(_do_publish)
 
     def completed(
-        self, doc_id: int, extracted_text: str, processing_metrics: str
+        self, doc_id: str, extracted_text: str, processing_metrics: str
     ) -> None:
         self.publish(
             doc_id,
@@ -122,7 +122,7 @@ class StatusPublisher:
 
     def failed(
         self,
-        doc_id: int,
+        doc_id: str,
         message: str,
         report_extra: dict | None = None,
         extracted_text: str | None = None,
@@ -139,7 +139,7 @@ class StatusPublisher:
             processing_metrics=processing_metrics,
         )
 
-    def processing(self, doc_id: int) -> None:
+    def processing(self, doc_id: str) -> None:
         self.publish(doc_id, "PROCESSING")
 
 
