@@ -1,6 +1,7 @@
+import copy
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from fastapi import HTTPException
 from app.constants.defaults import (
@@ -21,26 +22,75 @@ from app.services.embedding_service import EmbeddingService, embedding_service
 
 logger = logging.getLogger(__name__)
 
+TEMPLATE_PATHS = {
+    SearchMode.FULL_TEXT: FULL_TEXT_QUERY_FILE,
+    SearchMode.SEMANTIC: SEMANTIC_QUERY_FILE,
+}
+
+BM25_SOURCE = "bm25"
+VECTOR_SOURCE = "vector"
+
+UNRANKED = 10**9
+
 
 @dataclass
 class SearchCandidate:
     document_id: str
     score: float
     snippet: str | None = None
-    bm25_rank: int | None = None
-    vector_rank: int | None = None
-    bm25_score: float | None = None
-    vector_score: float | None = None
+    ranks: dict[str, int] = field(default_factory=dict)
+    scores: dict[str, float] = field(default_factory=dict)
+
+
+def text_clauses(body: dict[str, Any]) -> list[dict[str, Any]]:
+    bool_query = body.get("query", {}).get("bool", {})
+    clauses = bool_query.get("must", []) + bool_query.get("should", [])
+
+    return [c for c in clauses if "multi_match" in c or "match" in c]
+
+
+class QueryTemplates:
+    def __init__(self, paths: dict[SearchMode, str]) -> None:
+        self.templates: dict[SearchMode, dict[str, Any]] = {}
+
+        for mode, path in paths.items():
+            body = self.read(path)
+            self.validate(mode, body, path)
+            self.templates[mode] = body
+
+    def get(self, mode: SearchMode) -> dict[str, Any]:
+        template = self.templates.get(mode)
+
+        if template is None:
+            raise ValueError(f"Unsupported search mode: {mode}")
+
+        return copy.deepcopy(template)
+
+    @staticmethod
+    def read(path: str) -> dict[str, Any]:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+
+    @staticmethod
+    def validate(mode: SearchMode, body: dict[str, Any], path: str) -> None:
+        if mode == SearchMode.FULL_TEXT and not text_clauses(body):
+            raise ValueError(f"{path}: template has no match/multi_match clause")
+
+        if mode != SearchMode.SEMANTIC:
+            return
+
+        knn = body.get("knn")
+        if not isinstance(knn, dict):
+            raise ValueError(f"{path}: template has no knn block")
+
+        if "filter" not in knn.get("filter", {}).get("bool", {}):
+            raise ValueError(f"{path}: template needs knn.filter.bool.filter")
 
 
 class SearchQueryBuilder:
-    TEMPLATE_PATHS = {
-        SearchMode.FULL_TEXT: FULL_TEXT_QUERY_FILE,
-        SearchMode.SEMANTIC: SEMANTIC_QUERY_FILE,
-    }
-
-    def __init__(self, embedding: EmbeddingService) -> None:
+    def __init__(self, embedding: EmbeddingService, templates: QueryTemplates) -> None:
         self.embedding = embedding
+        self.templates = templates
 
     def build(
         self,
@@ -50,65 +100,54 @@ class SearchQueryBuilder:
         owner_id: str | None,
         mode: SearchMode,
     ) -> dict[str, Any]:
-        body = self.load_template(mode)
+        return self.build_body(
+            query=query,
+            mode=mode,
+            owner_id=owner_id,
+            offset=(page - 1) * page_size,
+            size=page_size,
+            knn_k=self.candidate_size(
+                page=page,
+                page_size=page_size,
+                minimum=SEARCH_KNN_POOL_SIZE,
+            ),
+        )
+
+    def build_candidate(
+        self,
+        query: str,
+        candidate_size: int,
+        owner_id: str | None,
+        mode: SearchMode,
+    ) -> dict[str, Any]:
+        return self.build_body(
+            query=query,
+            mode=mode,
+            owner_id=owner_id,
+            offset=0,
+            size=candidate_size,
+            knn_k=candidate_size,
+        )
+
+    def build_body(
+        self,
+        query: str,
+        mode: SearchMode,
+        owner_id: str | None,
+        offset: int,
+        size: int,
+        knn_k: int,
+    ) -> dict[str, Any]:
+        body = self.templates.get(mode)
         filters = self.owner_filter(owner_id)
 
-        body["from"] = (page - 1) * page_size
-        body["size"] = page_size
+        body["from"] = offset
+        body["size"] = size
 
         if mode == SearchMode.FULL_TEXT:
             return self.apply_full_text(body, query, filters)
 
-        if mode == SearchMode.SEMANTIC:
-            query_vector = self.embedding.encode_query(query)
-            knn_k = self.candidate_size(
-                page=page,
-                page_size=page_size,
-                minimum=SEARCH_KNN_POOL_SIZE,
-            )
-            return self.apply_semantic(body, query_vector, knn_k, filters)
-
-        raise ValueError(f"Unsupported build mode: {mode}")
-
-    def build_full_text_candidate(
-        self,
-        query: str,
-        candidate_size: int,
-        owner_id: str | None,
-    ) -> dict[str, Any]:
-        body = self.load_template(SearchMode.FULL_TEXT)
-        filters = self.owner_filter(owner_id)
-
-        body["from"] = 0
-        body["size"] = candidate_size
-
-        return self.apply_full_text(body, query, filters)
-
-    def build_semantic_candidate(
-        self,
-        query: str,
-        candidate_size: int,
-        owner_id: str | None,
-    ) -> dict[str, Any]:
-        body = self.load_template(SearchMode.SEMANTIC)
-        filters = self.owner_filter(owner_id)
-
-        body["from"] = 0
-        body["size"] = candidate_size
-
-        query_vector = self.embedding.encode_query(query)
-
-        return self.apply_semantic(
-            body=body,
-            query_vector=query_vector,
-            knn_k=candidate_size,
-            filters=filters,
-        )
-
-    def load_template(self, mode: SearchMode) -> dict[str, Any]:
-        path = self.TEMPLATE_PATHS[mode]
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
+        return self.apply_semantic(body, query, knn_k, filters)
 
     @staticmethod
     def owner_filter(owner_id: str | None) -> list[dict[str, Any]]:
@@ -122,21 +161,21 @@ class SearchQueryBuilder:
         query: str,
         filters: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        self.set_text_clauses(body, query, context="full_text")
+        self.set_text_clauses(body, query)
         body["query"]["bool"]["filter"] = filters
         return body
 
     def apply_semantic(
         self,
         body: dict[str, Any],
-        query_vector: list[float],
+        query: str,
         knn_k: int,
         filters: list[dict[str, Any]],
     ) -> dict[str, Any]:
         if SEARCH_SEMANTIC_MIN_SCORE is not None:
             body["min_score"] = SEARCH_SEMANTIC_MIN_SCORE
 
-        self.apply_knn(body, query_vector, knn_k, filters)
+        self.apply_knn(body, self.embedding.encode_query(query), knn_k, filters)
         return body
 
     @staticmethod
@@ -162,42 +201,24 @@ class SearchQueryBuilder:
         knn_k: int,
         filters: list[dict[str, Any]],
     ) -> None:
+        # Shape was checked by QueryTemplates.validate at startup.
         knn = body["knn"]
         knn["query_vector"] = query_vector
         knn["k"] = knn_k
         knn["num_candidates"] = min(knn_k * 5, 10_000)
-
-        if "filter" not in knn:
-            if filters:
-                raise KeyError("kNN template missing knn.filter.")
-            return
-
-        if "bool" not in knn["filter"] or "filter" not in knn["filter"]["bool"]:
-            raise KeyError("kNN template has unsupported knn.filter shape.")
-
         knn["filter"]["bool"]["filter"] = filters
 
     @staticmethod
-    def set_text_clauses(body: dict[str, Any], query: str, context: str) -> None:
-        bool_query = body.get("query", {}).get("bool", {})
-        clauses = bool_query.get("must", []) + bool_query.get("should", [])
-        matched = False
-
-        for clause in clauses:
+    def set_text_clauses(body: dict[str, Any], query: str) -> None:
+        for clause in text_clauses(body):
             if "multi_match" in clause:
                 clause["multi_match"]["query"] = query
-                matched = True
 
-            if "match" in clause:
-                for field, value in clause["match"].items():
-                    if isinstance(value, dict):
-                        value["query"] = query
-                    else:
-                        clause["match"][field] = query
-                    matched = True
-
-        if not matched:
-            raise KeyError(f"Unsupported {context} template: missing text query clause")
+            for field_name, value in clause.get("match", {}).items():
+                if isinstance(value, dict):
+                    value["query"] = query
+                else:
+                    clause["match"][field_name] = query
 
 
 class SearchResponseParser:
@@ -303,43 +324,23 @@ class RRFMerger:
     ) -> list[SearchCandidate]:
         merged: dict[str, SearchCandidate] = {}
 
-        self.add_bm25_hits(merged, bm25_hits)
-        self.add_vector_hits(merged, vector_hits)
+        self.add_ranked_hits(merged, BM25_SOURCE, bm25_hits)
+        self.add_ranked_hits(merged, VECTOR_SOURCE, vector_hits)
         self.calculate_scores(merged)
 
-        return sorted(
-            merged.values(),
-            key=lambda item: (
-                -item.score,
-                item.bm25_rank or 10**9,
-                item.vector_rank or 10**9,
-            ),
-        )
+        return sorted(merged.values(), key=self.sort_key)
 
-    def add_bm25_hits(
+    def add_ranked_hits(
         self,
         merged: dict[str, SearchCandidate],
+        source: str,
         hits: list[SearchCandidate],
     ) -> None:
         for rank, hit in enumerate(hits, start=1):
             candidate = self.get_or_create(merged, hit)
 
-            candidate.bm25_rank = rank
-            candidate.bm25_score = hit.score
-
-            if not candidate.snippet and hit.snippet:
-                candidate.snippet = hit.snippet
-
-    def add_vector_hits(
-        self,
-        merged: dict[str, SearchCandidate],
-        hits: list[SearchCandidate],
-    ) -> None:
-        for rank, hit in enumerate(hits, start=1):
-            candidate = self.get_or_create(merged, hit)
-
-            candidate.vector_rank = rank
-            candidate.vector_score = hit.score
+            candidate.ranks[source] = rank
+            candidate.scores[source] = hit.score
 
             if not candidate.snippet and hit.snippet:
                 candidate.snippet = hit.snippet
@@ -363,20 +364,27 @@ class RRFMerger:
 
     def calculate_scores(self, merged: dict[str, SearchCandidate]) -> None:
         for hit in merged.values():
-            score = 0.0
+            hit.score = sum(self.rrf_score(rank) for rank in hit.ranks.values())
 
-            if hit.bm25_rank is not None:
-                score += self.rrf_score(hit.bm25_rank)
-
-            if hit.vector_rank is not None:
-                score += self.rrf_score(hit.vector_rank)
-
-            hit.score = score
+    @staticmethod
+    def sort_key(candidate: SearchCandidate) -> tuple[float, int, int]:
+        return (
+            -candidate.score,
+            candidate.ranks.get(BM25_SOURCE, UNRANKED),
+            candidate.ranks.get(VECTOR_SOURCE, UNRANKED),
+        )
 
 
 class SearchService:
-    def __init__(self, embedding: EmbeddingService) -> None:
-        self.builder = SearchQueryBuilder(embedding)
+    def __init__(
+        self,
+        embedding: EmbeddingService,
+        templates: QueryTemplates | None = None,
+    ) -> None:
+        self.builder = SearchQueryBuilder(
+            embedding,
+            templates if templates is not None else QueryTemplates(TEMPLATE_PATHS),
+        )
         self.parser = SearchResponseParser()
         self.rrf_merger = RRFMerger()
 
@@ -407,6 +415,11 @@ class SearchService:
                 mode=mode,
             )
 
+        except HTTPException:
+            raise
+        except ValueError as exc:
+            logger.exception("Search failed: unsupported request")
+            raise HTTPException(status_code=400, detail=str(exc))
         except Exception as exc:
             logger.exception("Search failed")
             raise HTTPException(status_code=502, detail=f"Elasticsearch error: {exc}")
@@ -456,27 +469,21 @@ class SearchService:
     ) -> tuple[list[SearchHit], int]:
         es = es_client.get_client()
 
-        bm25_body = self.builder.build_full_text_candidate(
-            query=query,
-            candidate_size=SEARCH_MAX_CANDIDATE_SIZE,
-            owner_id=owner_id,
-        )
+        bodies = [
+            self.builder.build_candidate(
+                query=query,
+                candidate_size=SEARCH_MAX_CANDIDATE_SIZE,
+                owner_id=owner_id,
+                mode=mode,
+            )
+            for mode in (SearchMode.FULL_TEXT, SearchMode.SEMANTIC)
+        ]
 
-        semantic_body = self.builder.build_semantic_candidate(
-            query=query,
-            candidate_size=SEARCH_MAX_CANDIDATE_SIZE,
-            owner_id=owner_id,
-        )
-
-        bm25_resp = es.search(index=ELASTICSEARCH_INDEX, body=bm25_body)
-        semantic_resp = es.search(index=ELASTICSEARCH_INDEX, body=semantic_body)
-
-        bm25_hits = self.parser.candidates(bm25_resp)
-        semantic_hits = self.parser.candidates(semantic_resp)
+        bm25_resp, semantic_resp = self.multi_search(es, bodies)
 
         merged_hits = self.rrf_merger.merge(
-            bm25_hits=bm25_hits,
-            vector_hits=semantic_hits,
+            bm25_hits=self.parser.candidates(bm25_resp),
+            vector_hits=self.parser.candidates(semantic_resp),
         )
 
         page_hits = self.paginate(
@@ -486,6 +493,21 @@ class SearchService:
         )
 
         return self.to_search_hits(page_hits), len(merged_hits)
+
+    @staticmethod
+    def multi_search(es, bodies: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        searches: list[dict[str, Any]] = []
+        for body in bodies:
+            searches.append({})
+            searches.append(body)
+
+        responses = es.msearch(index=ELASTICSEARCH_INDEX, searches=searches)
+
+        for response in responses["responses"]:
+            if "error" in response:
+                raise RuntimeError(f"Elasticsearch search failed: {response['error']}")
+
+        return list(responses["responses"])
 
     @staticmethod
     def paginate(
