@@ -39,6 +39,8 @@ SEARCH_MAX_CANDIDATE_SIZE = 1000
 
 SNIPPET_MAX_CHARS = 320
 
+QUERY_EMBEDDING_CACHE_PREFIX = "emb:q"
+
 ###
 
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"

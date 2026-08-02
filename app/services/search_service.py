@@ -60,7 +60,7 @@ class SearchQueryBuilder:
             return self.apply_full_text(body, query, filters)
 
         if mode == SearchMode.SEMANTIC:
-            query_vector = self.embedding.encode_text(query)
+            query_vector = self.embedding.encode_query(query)
             knn_k = self.candidate_size(
                 page=page,
                 page_size=page_size,
@@ -96,7 +96,7 @@ class SearchQueryBuilder:
         body["from"] = 0
         body["size"] = candidate_size
 
-        query_vector = self.embedding.encode_text(query)
+        query_vector = self.embedding.encode_query(query)
 
         return self.apply_semantic(
             body=body,
