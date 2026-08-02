@@ -16,7 +16,6 @@ DOCUMENTS_INDEX_MAPPING_FILE = os.path.join(ES_MAPPINGS_DIR, "documents_index.js
 ES_QUERIES_DIR = os.path.join(CONSTANTS_DIR, "es_queries")
 FULL_TEXT_QUERY_FILE = os.path.join(ES_QUERIES_DIR, "full_text.json")
 SEMANTIC_QUERY_FILE = os.path.join(ES_QUERIES_DIR, "semantic.json")
-HYBRID_QUERY_FILE = os.path.join(ES_QUERIES_DIR, "hybrid.json")
 
 TEMP_DIR = tempfile.gettempdir()
 LAPLACIAN_VAR_THRESHOLD = 70.0
