@@ -29,7 +29,7 @@ This repository is one of three services that make up the DMS:
 This service sits between the Spring Boot backend and Elasticsearch. It:
 
 1. Listens to a RabbitMQ queue for new document events from the backend.
-2. Downloads the document from S3, runs OCR (EasyOCR / PyMuPDF) if needed, chunks the text, generates embeddings, and indexes everything into Elasticsearch.
+2. Downloads the document from Cloudflare R2, runs OCR (EasyOCR / PyMuPDF) if needed, chunks the text, generates embeddings, and indexes everything into Elasticsearch.
 3. Exposes a REST API used by the backend for semantic/full-text/hybrid search and AI-generated summaries.
 
 It runs as **two processes**: the FastAPI server (`app.main`) and the RabbitMQ
@@ -71,7 +71,7 @@ Extraction is dispatched by MIME type (`app/constants/defaults.py`):
 - Google GenAI SDK (Gemini summarization)
 - MLflow (prompt/model registry and experiment tracking)
 - prometheus-client (worker metrics)
-- AWS S3 (boto3) for document file retrieval
+- Cloudflare R2 via boto3's S3-compatible client for document file retrieval
 
 ## Prerequisites
 
@@ -79,7 +79,7 @@ Extraction is dispatched by MIME type (`app/constants/defaults.py`):
 - Running Elasticsearch instance
 - Running RabbitMQ instance
 - Running MLflow tracking server with a registered summarization model
-- AWS S3 bucket (or compatible) with document files
+- Cloudflare R2 bucket (or S3-compatible storage) with document files
 - Google Gemini API key (for summarization)
 - (Optional) Redis — the embedding cache degrades gracefully without it
 - (Optional) GPU for faster EasyOCR — CPU is supported by default
@@ -133,6 +133,13 @@ Worth knowing without opening the file:
 - `REDIS_URL` is optional. If it is unset, or Redis is unreachable, the embedding
   cache is skipped and the service keeps running.
 - `OCR_USE_GPU` defaults to `false`; CPU inference works but is much slower.
+- File retrieval was **migrated from AWS S3 to Cloudflare R2**. `R2_ACCESS_KEY`,
+  `R2_SECRET_KEY`, `R2_REGION` (defaults to `auto`), and `R2_ENDPOINT`
+  (`https://<ACCOUNT_ID>.r2.cloudflarestorage.com`) replace the old
+  `AWS_S3_ACCESS_KEY` / `AWS_S3_SECRET_KEY` / `AWS_S3_REGION` variables and
+  configure the boto3 S3-compatible client used to download documents from R2
+  — these must match the backend's R2 credentials, since the backend writes the
+  `s3://bucket/key` URIs this service downloads.
 
 Other tunable values (chunk size, image thresholds, search scores, etc.) are hardcoded in `app/constants/defaults.py`.
 
@@ -156,7 +163,7 @@ API docs are available at `http://localhost:8000/docs` when the server is runnin
 
 The worker (`app/worker.py`) is a long-running RabbitMQ consumer. On each message it:
 
-1. Downloads the document file from S3.
+1. Downloads the document file from Cloudflare R2.
 2. Extracts text (PDF via PyMuPDF, images via EasyOCR, DOCX via python-docx).
 3. Validates image quality (blur, contrast, dimensions).
 4. Chunks the extracted text and generates embeddings.

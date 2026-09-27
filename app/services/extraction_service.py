@@ -1,40 +1,43 @@
 from __future__ import annotations
+
 import logging
 import os
 import re
 import shutil
 import subprocess
 import tempfile
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
+
 import boto3
 import cv2
 import easyocr
 import fitz
-import pandas as pd
 import numpy as np
+import pandas as pd
 import requests
 from botocore.exceptions import BotoCoreError, ClientError
 from docx import Document
-from app.core.config import (
-    AWS_S3_ACCESS_KEY,
-    AWS_S3_REGION,
-    AWS_S3_SECRET_KEY,
-    OCR_USE_GPU,
-)
+
 from app.constants.defaults import (
+    EXT_TO_CONTENT_TYPE,
     LAPLACIAN_VAR_THRESHOLD,
+    MIME_TO_CONTENT_TYPE,
+    MIME_TO_EXT,
     MIN_CONTRAST_THRESHOLD,
     MIN_IMAGE_HEIGHT,
     MIN_IMAGE_WIDTH,
+    PDF_MIN_CHARS_PER_PAGE,
     TEMP_DIR,
+    TEXT_FILE_ENCODINGS,
     VALIDATE_ALL_PDF_PAGES,
 )
-from app.constants.defaults import (
-    EXT_TO_CONTENT_TYPE,
-    MIME_TO_CONTENT_TYPE,
-    MIME_TO_EXT,
-    PDF_MIN_CHARS_PER_PAGE,
-    TEXT_FILE_ENCODINGS,
+from app.core.config import (
+    OCR_USE_GPU,
+    R2_ACCESS_KEY,
+    R2_ENDPOINT,
+    R2_REGION,
+    R2_SECRET_KEY,
 )
 from app.models.validation import ValidationCheck, ValidationReport
 
@@ -106,9 +109,10 @@ class FileDownloader:
         try:
             boto3.client(
                 "s3",
-                aws_access_key_id=AWS_S3_ACCESS_KEY or None,
-                aws_secret_access_key=AWS_S3_SECRET_KEY or None,
-                region_name=AWS_S3_REGION,
+                aws_access_key_id=R2_ACCESS_KEY or None,
+                aws_secret_access_key=R2_SECRET_KEY or None,
+                region_name=R2_REGION,
+                endpoint_url=R2_ENDPOINT or None,
             ).download_file(bucket, key, path)
         except (ClientError, BotoCoreError):
             logger.exception("S3 download failed bucket=%s key=%s", bucket, key)
