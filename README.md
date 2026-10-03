@@ -23,7 +23,7 @@ This repository is one of three services that make up the DMS:
 | Repository | Role |
 |---|---|
 | **document-management-be** | Spring Boot REST API — auth, document/folder management, permissions, file storage, RabbitMQ publisher. Also owns the `docker-compose.yml` that runs all three services. |
-| **document-management-processor** (this repo) | Python/FastAPI — OCR, chunking, embeddings, Elasticsearch indexing, Gemini summarization, RabbitMQ worker |
+| **document-management-processor** (this repo) | Python/FastAPI — OCR, chunking, embeddings, Elasticsearch indexing, local LLM summarization (Ollama), RabbitMQ worker |
 | **document-management-fe** | Next.js 16 (App Router) frontend — UI, routing, admin panel, i18n |
 
 This service sits between the Spring Boot backend and Elasticsearch. It:
@@ -42,7 +42,7 @@ separately — see [Worker](#worker-async-processing).
 - Document chunking and embedding generation (Sentence Transformers)
 - Redis-backed query embedding cache, with graceful degradation when Redis is unavailable
 - Elasticsearch indexing with full-text, semantic, and hybrid search modes
-- AI-powered document summarization via Google Gemini, with prompts and model versions tracked in MLflow
+- AI-powered document summarization with a local LLM via Ollama, with prompts and model versions tracked in MLflow
 - Async document processing via RabbitMQ consumer worker
 - Prometheus metrics exported from the worker
 
@@ -68,7 +68,7 @@ Extraction is dispatched by MIME type (`app/constants/defaults.py`):
 - EasyOCR, PyMuPDF, python-docx, pandas + openpyxl (document parsing)
 - OpenCV headless (image quality validation)
 - Sentence Transformers (embeddings)
-- Google GenAI SDK (Gemini summarization)
+- Ollama Python client (local LLM summarization)
 - MLflow (prompt/model registry and experiment tracking)
 - prometheus-client (worker metrics)
 - Cloudflare R2 via boto3's S3-compatible client for document file retrieval
@@ -80,7 +80,7 @@ Extraction is dispatched by MIME type (`app/constants/defaults.py`):
 - Running RabbitMQ instance
 - Running MLflow tracking server with a registered summarization model
 - Cloudflare R2 bucket (or S3-compatible storage) with document files
-- Google Gemini API key (for summarization)
+- Ollama server with at least one pulled model (e.g. `ollama pull qwen2.5:3b`)
 - (Optional) Redis — the embedding cache degrades gracefully without it
 - (Optional) GPU for faster EasyOCR — CPU is supported by default
 
@@ -203,6 +203,16 @@ From the backend repository, the equivalent one-off container is:
 ```bash
 docker compose --profile tools run --rm register
 ```
+
+To register a different model without touching `.env`, pass `--model`. The script
+first checks that the model has been pulled in Ollama and exits with an error if not:
+
+```bash
+docker exec dms-ollama ollama pull llama3.1:8b
+docker compose --profile tools run --rm register python -m scripts.register_model --model llama3.1:8b
+```
+
+Without `--model`, `OLLAMA_MODEL_NAME` is used.
 
 `POST /models/reload` makes a running server pick up a newly promoted version
 without a restart.

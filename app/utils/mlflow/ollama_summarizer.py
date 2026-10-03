@@ -2,9 +2,16 @@ import json
 import logging
 import mlflow.pyfunc
 import pandas as pd
-from google import genai
+import ollama
 from app.constants.defaults import DEFAULT_LANG
-from app.core.config import GEMINI_API_KEY
+from app.core.config import (
+    OLLAMA_HOST,
+    OLLAMA_KEEP_ALIVE,
+    OLLAMA_MAX_INPUT_CHARS,
+    OLLAMA_NUM_CTX,
+    OLLAMA_NUM_PREDICT,
+    OLLAMA_TIMEOUT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,16 +39,36 @@ PROMPTS = {
 }
 
 
-class GeminiSummarizer(mlflow.pyfunc.PythonModel):
-    """MLflow PythonModel wrapping Google Gemini for summarization."""
+def generate_summary(client: ollama.Client, model: str, text: str, language: str) -> str:
+    """Summarize `text`, truncating long input so CPU inference stays tractable."""
+    if len(text) > OLLAMA_MAX_INPUT_CHARS:
+        logger.warning(
+            "Input truncated from %d to %d chars for summarization",
+            len(text),
+            OLLAMA_MAX_INPUT_CHARS,
+        )
+        text = text[:OLLAMA_MAX_INPUT_CHARS]
+
+    template = PROMPTS.get(language, PROMPTS[DEFAULT_LANG])
+    response = client.generate(
+        model=model,
+        prompt=template.format(text=text),
+        options={"num_ctx": OLLAMA_NUM_CTX, "num_predict": OLLAMA_NUM_PREDICT},
+        keep_alive=OLLAMA_KEEP_ALIVE,
+    )
+    return response.response
+
+
+class OllamaSummarizer(mlflow.pyfunc.PythonModel):
+    """MLflow PythonModel wrapping a local Ollama model for summarization."""
 
     def load_context(self, context):
         config_path = context.artifacts["config"]
         with open(config_path) as f:
             config = json.load(f)
         self.model_name = config["model_name"]
-        self.client = genai.Client(api_key=GEMINI_API_KEY)
-        logger.info("GeminiSummarizer loaded: model=%s", self.model_name)
+        self.client = ollama.Client(host=OLLAMA_HOST, timeout=OLLAMA_TIMEOUT)
+        logger.info("OllamaSummarizer loaded: model=%s", self.model_name)
 
     def predict(self, context, model_input: pd.DataFrame) -> str:
         if hasattr(model_input, "to_dict"):
@@ -54,10 +81,4 @@ class GeminiSummarizer(mlflow.pyfunc.PythonModel):
         text = row["text"]
         language = row.get("language", DEFAULT_LANG)
 
-        template = PROMPTS.get(language, PROMPTS[DEFAULT_LANG])
-        prompt = template.format(text=text)
-
-        response = self.client.models.generate_content(
-            model=self.model_name, contents=prompt
-        )
-        return response.text
+        return generate_summary(self.client, self.model_name, text, language)
