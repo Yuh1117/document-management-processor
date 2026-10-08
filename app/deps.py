@@ -2,6 +2,7 @@ from fastapi import Header, HTTPException, status
 
 from app.core.config import PROCESSOR_API_KEY
 from app.services.embedding_service import EmbeddingService, embedding_service
+from app.services.rag_service import RagService, rag_service
 from app.services.search_service import SearchService, search_service
 from app.services.summarize_service import SummarizeService, summarize_service
 
@@ -19,6 +20,10 @@ def get_embedding_service() -> EmbeddingService:
 
 def get_search_service() -> SearchService:
     return search_service
+
+
+def get_rag_service() -> RagService:
+    return rag_service
 
 
 def get_summarize_service() -> SummarizeService:

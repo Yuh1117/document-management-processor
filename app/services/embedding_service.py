@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 
 VECTOR_DTYPE = np.float32
 
+E5_QUERY_PREFIX = "query: "
+E5_PASSAGE_PREFIX = "passage: "
+
 
 class QueryEmbeddingCache:
     def __init__(
@@ -72,9 +75,19 @@ class EmbeddingService:
     def __init__(self, cache: QueryEmbeddingCache | None = None) -> None:
         self.model: SentenceTransformer = self.load_model()
         self.cache = cache if cache is not None else QueryEmbeddingCache()
+        is_e5 = "e5" in (SENTENCE_TRANSFORMER_MODEL_NAME or "").lower()
+        self.query_prefix = E5_QUERY_PREFIX if is_e5 else ""
+        self.passage_prefix = E5_PASSAGE_PREFIX if is_e5 else ""
 
     def encode_text(self, text: str) -> list[float]:
-        return self.encode(text).tolist()
+        return self.encode(text, self.passage_prefix).tolist()
+
+    def encode_many(self, texts: list[str]) -> np.ndarray:
+        try:
+            return self.model.encode([self.passage_prefix + t for t in texts])
+        except Exception as e:
+            logger.error("Embedding batch encode failed: %s", e)
+            raise HTTPException(status_code=500, detail=f"Embedding error: {str(e)}")
 
     def encode_query(self, text: str) -> list[float]:
         started = time.perf_counter()
@@ -84,7 +97,7 @@ class EmbeddingService:
             self.log_outcome("HIT", text, started)
             return cached
 
-        vector = self.encode(text)
+        vector = self.encode(text, self.query_prefix)
         self.cache.set(text, vector)
         self.log_outcome("MISS", text, started)
 
@@ -98,9 +111,9 @@ class EmbeddingService:
             "Query embedding cache %s in %.1fms query=%r", outcome, elapsed_ms, preview
         )
 
-    def encode(self, text: str) -> np.ndarray:
+    def encode(self, text: str, prefix: str = "") -> np.ndarray:
         try:
-            return self.model.encode(text)
+            return self.model.encode(prefix + text)
         except Exception as e:
             logger.error("Embedding encode failed: %s", e)
             raise HTTPException(status_code=500, detail=f"Embedding error: {str(e)}")

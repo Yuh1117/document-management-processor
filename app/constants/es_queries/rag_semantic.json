@@ -1,0 +1,17 @@
+{
+  "size": 10,
+  "track_total_hits": false,
+  "_source": ["chunk_id", "document_id", "name", "content"],
+  "knn": {
+    "field": "content_vector",
+    "query_vector": [],
+    "k": 10,
+    "num_candidates": 50,
+    "filter": {
+      "bool": {
+        "filter": [],
+        "must_not": []
+      }
+    }
+  }
+}

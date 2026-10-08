@@ -16,11 +16,13 @@ DOCUMENTS_INDEX_MAPPING_FILE = os.path.join(ES_MAPPINGS_DIR, "documents_index.js
 ES_QUERIES_DIR = os.path.join(CONSTANTS_DIR, "es_queries")
 FULL_TEXT_QUERY_FILE = os.path.join(ES_QUERIES_DIR, "full_text.json")
 SEMANTIC_QUERY_FILE = os.path.join(ES_QUERIES_DIR, "semantic.json")
+RAG_FULL_TEXT_QUERY_FILE = os.path.join(ES_QUERIES_DIR, "rag_full_text.json")
+RAG_SEMANTIC_QUERY_FILE = os.path.join(ES_QUERIES_DIR, "rag_semantic.json")
 
 TEMP_DIR = tempfile.gettempdir()
 LAPLACIAN_VAR_THRESHOLD = 70.0
-CHUNK_SIZE = 1200
-CHUNK_OVERLAP = 200
+CHUNK_SIZE = 500
+CHUNK_OVERLAP = 100
 
 MIN_IMAGE_WIDTH = 300
 MIN_IMAGE_HEIGHT = 300

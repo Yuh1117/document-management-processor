@@ -39,8 +39,9 @@ PROMPTS = {
 }
 
 
-def generate_summary(client: ollama.Client, model: str, text: str, language: str) -> str:
-    """Summarize `text`, truncating long input so CPU inference stays tractable."""
+def generate_summary(
+    client: ollama.Client, model: str, text: str, language: str
+) -> str:
     if len(text) > OLLAMA_MAX_INPUT_CHARS:
         logger.warning(
             "Input truncated from %d to %d chars for summarization",
