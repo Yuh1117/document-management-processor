@@ -6,9 +6,11 @@ import numpy as np
 from fastapi import HTTPException
 from sentence_transformers import SentenceTransformer
 
-from app.constants.defaults import QUERY_EMBEDDING_CACHE_PREFIX
-from app.core.config import (
+from app.constants.defaults import (
+    QUERY_EMBEDDING_CACHE_PREFIX,
     QUERY_EMBEDDING_CACHE_TTL,
+)
+from app.core.config import (
     SENTENCE_TRANSFORMER_MODEL_NAME,
 )
 from app.core.redis_client import RedisClient, redis_client

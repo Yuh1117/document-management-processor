@@ -3,14 +3,16 @@ import logging
 import mlflow.pyfunc
 import pandas as pd
 import ollama
-from app.constants.defaults import DEFAULT_LANG
-from app.core.config import (
-    OLLAMA_HOST,
+from app.constants.defaults import (
+    DEFAULT_LANG,
     OLLAMA_KEEP_ALIVE,
     OLLAMA_MAX_INPUT_CHARS,
     OLLAMA_NUM_CTX,
     OLLAMA_NUM_PREDICT,
     OLLAMA_TIMEOUT,
+)
+from app.core.config import (
+    OLLAMA_HOST,
 )
 
 logger = logging.getLogger(__name__)

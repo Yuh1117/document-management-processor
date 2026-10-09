@@ -9,15 +9,17 @@ from fastapi import HTTPException
 import ollama
 
 from app.core.config import (
-    OLLAMA_HOST,
-    OLLAMA_MODEL_NAME,
-    OLLAMA_TIMEOUT,
     MLFLOW_REGISTERED_MODEL_NAME,
     MLFLOW_SUMMARIZE_MODEL_URI,
     MLFLOW_TRACKING_URI,
+    OLLAMA_HOST,
+    OLLAMA_MODEL_NAME,
     SUMMARIZE_PROMPT_VERSION,
 )
-from app.constants.defaults import DEFAULT_LANG
+from app.constants.defaults import (
+    DEFAULT_LANG,
+    OLLAMA_TIMEOUT,
+)
 from app.utils.mlflow.ollama_summarizer import generate_summary
 
 logger = logging.getLogger(__name__)

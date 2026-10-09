@@ -9,23 +9,23 @@ import ollama
 
 from app.constants.defaults import (
     DEFAULT_LANG,
-    RAG_FULL_TEXT_QUERY_FILE,
-    RAG_SEMANTIC_QUERY_FILE,
-)
-from app.core.config import (
-    OLLAMA_HOST,
     OLLAMA_KEEP_ALIVE,
-    OLLAMA_MODEL_NAME,
     OLLAMA_NUM_CTX,
     OLLAMA_NUM_PREDICT,
     OLLAMA_TIMEOUT,
     RAG_CONTEXT_CHARS,
+    RAG_FULL_TEXT_QUERY_FILE,
     RAG_MAX_PASSAGES,
     RAG_MAX_QUESTION_CHARS,
     RAG_MIN_SIMILARITY,
     RAG_RETRIEVE_SIZE,
+    RAG_SEMANTIC_QUERY_FILE,
     RAG_TOP_CHUNKS,
     RAG_WINDOW_WORDS,
+)
+from app.core.config import (
+    OLLAMA_HOST,
+    OLLAMA_MODEL_NAME,
 )
 from app.core.es import es_client
 from app.services.embedding_service import EmbeddingService, embedding_service

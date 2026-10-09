@@ -7,11 +7,13 @@ import mlflow
 import mlflow.pyfunc
 import ollama
 from app.core.config import (
+    MLFLOW_REGISTERED_MODEL_NAME,
     MLFLOW_TRACKING_URI,
     OLLAMA_HOST,
     OLLAMA_MODEL_NAME,
+)
+from app.constants.defaults import (
     OLLAMA_TIMEOUT,
-    MLFLOW_REGISTERED_MODEL_NAME,
 )
 
 MLFLOW_EXPERIMENT = "document-summarization"
