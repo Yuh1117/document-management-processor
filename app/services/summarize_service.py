@@ -6,18 +6,21 @@ import mlflow
 import mlflow.pyfunc
 import pandas as pd
 from fastapi import HTTPException
-from google import genai
+import ollama
 
 from app.core.config import (
-    GEMINI_API_KEY,
-    GEMINI_MODEL_NAME,
     MLFLOW_REGISTERED_MODEL_NAME,
     MLFLOW_SUMMARIZE_MODEL_URI,
     MLFLOW_TRACKING_URI,
+    OLLAMA_HOST,
+    OLLAMA_MODEL_NAME,
     SUMMARIZE_PROMPT_VERSION,
 )
-from app.constants.defaults import DEFAULT_LANG
-from app.utils.mlflow.gemini_summarizer import PROMPTS
+from app.constants.defaults import (
+    DEFAULT_LANG,
+    OLLAMA_TIMEOUT,
+)
+from app.utils.mlflow.ollama_summarizer import generate_summary
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +29,7 @@ mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
 
 class SummarizeService:
     def __init__(self) -> None:
-        self.client = genai.Client(api_key=GEMINI_API_KEY)
+        self.client = ollama.Client(host=OLLAMA_HOST, timeout=OLLAMA_TIMEOUT)
         self.mlflow_model = self.load_mlflow_model()
         self.prompt_version = SUMMARIZE_PROMPT_VERSION
         self.lock = threading.Lock()
@@ -64,7 +67,7 @@ class SummarizeService:
             models.append(
                 {
                     "version": mv.version,
-                    "model_name": metadata.get("gemini_model"),
+                    "model_name": metadata.get("ollama_model"),
                     "is_active": is_active,
                     "created_at": datetime.fromtimestamp(
                         mv.creation_timestamp / 1000
@@ -97,7 +100,7 @@ class SummarizeService:
                 summary_text = self.predict_direct(text, language)
         except Exception as e:
             logger.error("Summarization failed: %s", e)
-            raise HTTPException(status_code=502, detail=f"Gemini API error: {str(e)}")
+            raise HTTPException(status_code=502, detail=f"Ollama error: {str(e)}")
 
         self.log_to_mlflow(
             self.model_name,
@@ -121,7 +124,7 @@ class SummarizeService:
             logger.info("Loaded MLflow model: %s", self.model_name)
             return model
         except Exception as e:
-            self.model_name = GEMINI_MODEL_NAME
+            self.model_name = OLLAMA_MODEL_NAME
             logger.warning(
                 "Could not load MLflow model (%s), falling back to config: %s",
                 MLFLOW_SUMMARIZE_MODEL_URI,
@@ -134,14 +137,8 @@ class SummarizeService:
         return self.mlflow_model.predict(input_df)
 
     def predict_direct(self, text: str, language: str) -> str:
-        template = PROMPTS.get(language, PROMPTS[DEFAULT_LANG])
-        prompt = template.format(text=text)
-
         logger.info("Summarizing (direct) with model=%s", self.model_name)
-        response = self.client.models.generate_content(
-            model=self.model_name, contents=prompt
-        )
-        return response.text
+        return generate_summary(self.client, self.model_name, text, language)
 
     @staticmethod
     def log_to_mlflow(

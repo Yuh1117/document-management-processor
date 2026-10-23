@@ -64,7 +64,6 @@ def delete_all_chunks_for_document(es, doc_id: str) -> None:
         es.delete_by_query(
             index=ELASTICSEARCH_INDEX,
             body={"query": {"term": {"document_id": str(doc_id)}}},
-            refresh="wait_for",
         )
         logger.info("Deleted prior Elasticsearch chunks for document_id=%s", doc_id)
     except Exception as e:
