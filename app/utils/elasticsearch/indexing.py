@@ -1,6 +1,8 @@
 import logging
 import re
 
+from elasticsearch.helpers import bulk, scan
+
 from app.core.config import ELASTICSEARCH_INDEX
 from app.constants.defaults import CHUNK_OVERLAP, CHUNK_SIZE
 
@@ -88,6 +90,33 @@ def update_document_name(es, doc_id: str, name: str) -> int:
         refresh=True,
     )
     return int(resp.get("updated", 0))
+
+
+def copy_document_chunks(
+    es, source_id: str, new_id: str, name: str, owner_id: str | None
+) -> int:
+    actions = []
+    for hit in scan(
+        es,
+        index=ELASTICSEARCH_INDEX,
+        query={"query": {"term": {"document_id": str(source_id)}}},
+    ):
+        chunk_no = hit["_id"].rsplit("_", 1)[-1]
+        chunk_id = f"{new_id}_{chunk_no}"
+        body = dict(hit["_source"])
+        body.update(
+            chunk_id=chunk_id,
+            document_id=str(new_id),
+            name=name,
+            owner_id=str(owner_id) if owner_id is not None else None,
+        )
+        actions.append({"_index": ELASTICSEARCH_INDEX, "_id": chunk_id, "_source": body})
+
+    if not actions:
+        return 0
+
+    copied, _ = bulk(es, actions, refresh=True)
+    return copied
 
 
 def build_chunk_document_body(
