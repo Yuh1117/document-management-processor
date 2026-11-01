@@ -1,8 +1,9 @@
 import copy
 import json
 import logging
-from dataclasses import dataclass
-from typing import Any, Callable, Iterator
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 import ollama
@@ -29,8 +30,8 @@ from app.core.config import (
     OLLAMA_MODEL_NAME,
 )
 from app.core.es import es_client
-from app.services.embedding_service import EmbeddingService, embedding_service
 from app.models.search import SearchMode
+from app.services.embedding_service import EmbeddingService, embedding_service
 from app.services.search_service import (
     QueryTemplates,
     RRFMerger,
@@ -86,6 +87,7 @@ class Passage:
     name: str | None
     text: str
     score: float
+    copies: list[tuple[str, str | None]] = field(default_factory=list)
 
 
 def sse(event: str, data: dict[str, Any]) -> str:
@@ -98,6 +100,27 @@ def split_windows(text: str, words_per_window: int) -> list[str]:
         " ".join(words[i : i + words_per_window])
         for i in range(0, len(words), words_per_window)
     ]
+
+
+def normalize_text(text: str) -> str:
+    return " ".join(text.split()).lower()
+
+
+def add_copy(hit: dict[str, Any], document_id: Any, name: str | None) -> None:
+    source = hit.get("_source") or {}
+    document_id = str(document_id)
+    copies = hit.setdefault("_copies", [])
+    if document_id != str(source.get("document_id")) and all(
+        c[0] != document_id for c in copies
+    ):
+        copies.append((document_id, name))
+
+
+def add_copy_to_passage(passage: "Passage", document_id: str, name: str | None) -> None:
+    if document_id != passage.document_id and all(
+        c[0] != document_id for c in passage.copies
+    ):
+        passage.copies.append((document_id, name))
 
 
 def truncate(text: str, limit: int) -> str:
@@ -251,26 +274,50 @@ class RagService:
             ]
 
         merged = RRFMerger().merge(candidates(bm25_hits), candidates(vector_hits))
-        return [by_id[c.document_id] for c in merged[:RAG_TOP_CHUNKS]]
+        top: list[dict[str, Any]] = []
+        kept: dict[str, dict[str, Any]] = {}
+        for c in merged:
+            hit = by_id[c.document_id]
+            source = hit.get("_source") or {}
+            key = normalize_text(source.get("content") or "")
+            if key in kept:
+                add_copy(kept[key], source.get("document_id"), source.get("name"))
+                continue
+            if len(top) >= RAG_TOP_CHUNKS:
+                continue
+            hit["_copies"] = []
+            kept[key] = hit
+            top.append(hit)
+        return top
 
     def select_passages(
         self, query_vector: list[float], chunks: list[dict[str, Any]]
     ) -> list[Passage]:
-        candidates: list[tuple[str, str | None, str]] = []
+        candidates: list[Passage] = []
+        seen: dict[str, Passage] = {}
         for hit in chunks:
             source = hit.get("_source") or {}
             content = source.get("content")
             if not isinstance(content, str) or not content.strip():
                 continue
+            document_id = str(source.get("document_id"))
+            name = source.get("name")
+            copies = hit.get("_copies") or []
             for window in split_windows(content, RAG_WINDOW_WORDS):
-                candidates.append(
-                    (str(source.get("document_id")), source.get("name"), window)
-                )
+                key = normalize_text(window)
+                existing = seen.get(key)
+                if existing is not None:
+                    for copy_id, copy_name in [(document_id, name), *copies]:
+                        add_copy_to_passage(existing, copy_id, copy_name)
+                    continue
+                passage = Passage(document_id, name, window, 0.0, list(copies))
+                seen[key] = passage
+                candidates.append(passage)
 
         if not candidates:
             return []
 
-        window_vectors = self.embedding.encode_many([c[2] for c in candidates])
+        window_vectors = self.embedding.encode_many([c.text for c in candidates])
         similarities = self.cosine(np.asarray(query_vector), window_vectors)
 
         passages: list[Passage] = []
@@ -280,12 +327,13 @@ class RagService:
             if score < RAG_MIN_SIMILARITY or len(passages) >= RAG_MAX_PASSAGES:
                 break
 
-            document_id, name, text = candidates[idx]
-            if passages and used_chars + len(text) > RAG_CONTEXT_CHARS:
+            passage = candidates[idx]
+            if passages and used_chars + len(passage.text) > RAG_CONTEXT_CHARS:
                 continue
 
-            passages.append(Passage(document_id, name, text, score))
-            used_chars += len(text)
+            passage.score = score
+            passages.append(passage)
+            used_chars += len(passage.text)
 
         return passages
 
@@ -309,12 +357,13 @@ class RagService:
         return [
             {
                 "index": i,
-                "document_id": p.document_id,
-                "name": p.name,
+                "document_id": document_id,
+                "name": name,
                 "snippet": truncate(p.text, SNIPPET_CHARS),
                 "score": round(p.score, 3),
             }
             for i, p in enumerate(passages, start=1)
+            for document_id, name in [(p.document_id, p.name), *p.copies]
         ]
 
 
