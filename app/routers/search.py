@@ -21,6 +21,7 @@ def search(
         mime_pattern=req.mime_pattern,
         size_min=req.size_min,
         size_max=req.size_max,
+        exclude_document_ids=req.exclude_document_ids,
     )
     return SearchResponse(
         hits=hits,

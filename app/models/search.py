@@ -17,6 +17,10 @@ class SearchRequest(BaseModel):
     mime_pattern: str | None = None
     size_min: int | None = Field(default=None, ge=0)
     size_max: int | None = Field(default=None, ge=0)
+    exclude_document_ids: list[str] = Field(
+        default_factory=list,
+        description="Documents that must not be returned (e.g. in the owner's trash)",
+    )
 
 
 class SearchHit(BaseModel):

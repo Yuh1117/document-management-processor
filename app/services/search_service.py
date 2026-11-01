@@ -3,7 +3,9 @@ import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any
+
 from fastapi import HTTPException
+
 from app.constants.defaults import (
     FULL_TEXT_QUERY_FILE,
     SEARCH_CANDIDATE_MULTIPLIER,
@@ -52,6 +54,7 @@ class SearchFilters:
     mime_pattern: str | None = None
     size_min: int | None = None
     size_max: int | None = None
+    exclude_document_ids: list[str] | None = None
 
 
 @dataclass
@@ -200,6 +203,17 @@ class SearchQueryBuilder:
             size_range["lte"] = filters.size_max
         if size_range:
             clauses.append({"range": {"file_size": size_range}})
+
+        if filters.exclude_document_ids:
+            clauses.append(
+                {
+                    "bool": {
+                        "must_not": [
+                            {"terms": {"document_id": filters.exclude_document_ids}}
+                        ]
+                    }
+                }
+            )
 
         return clauses
 
@@ -446,11 +460,15 @@ class SearchService:
         mime_pattern: str | None = None,
         size_min: int | None = None,
         size_max: int | None = None,
+        exclude_document_ids: list[str] | None = None,
     ) -> tuple[list[SearchHit], int]:
         try:
             page, page_size = self.normalize_pagination(page, page_size)
             filters = SearchFilters(
-                mime_pattern=mime_pattern, size_min=size_min, size_max=size_max
+                mime_pattern=mime_pattern,
+                size_min=size_min,
+                size_max=size_max,
+                exclude_document_ids=exclude_document_ids,
             )
 
             if mode == SearchMode.HYBRID:
