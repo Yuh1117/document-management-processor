@@ -14,6 +14,9 @@ class SearchRequest(BaseModel):
     page: int = Field(default=1, ge=1)
     page_size: int = Field(default=10, ge=1, le=100)
     mode: SearchMode = SearchMode.SEMANTIC
+    mime_pattern: str | None = None
+    size_min: int | None = Field(default=None, ge=0)
+    size_max: int | None = Field(default=None, ge=0)
 
 
 class SearchHit(BaseModel):

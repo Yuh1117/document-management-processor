@@ -10,6 +10,12 @@
       "owner_id": {
         "type": "keyword"
       },
+      "mime_type": {
+        "type": "keyword"
+      },
+      "file_size": {
+        "type": "long"
+      },
       "name": {
         "type": "text",
         "analyzer": "standard",

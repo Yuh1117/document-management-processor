@@ -46,6 +46,7 @@ class DocumentMessage:
     file_type: str = "application/octet-stream"
     owner_id: str | None = None
     name: str | None = None
+    file_size: int | None = None
 
     @classmethod
     def from_body(cls, body: bytes | bytearray | memoryview) -> "DocumentMessage":
@@ -58,7 +59,15 @@ class DocumentMessage:
             file_type=msg.get("file_type", "application/octet-stream"),
             owner_id=msg.get("owner_id"),
             name=msg.get("name"),
+            file_size=_to_int(msg.get("file_size")),
         )
+
+
+def _to_int(value: Any) -> int | None:
+    try:
+        return int(float(value)) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 class StatusPublisher:
@@ -288,7 +297,14 @@ class DocumentProcessor:
             es = es_client.get_client()
             delete_all_chunks_for_document(es, doc.doc_id)
             index_all_chunks(
-                es, self.embedding, doc.doc_id, chunks, doc.owner_id, doc.name
+                es,
+                self.embedding,
+                doc.doc_id,
+                chunks,
+                doc.owner_id,
+                doc.name,
+                doc.file_type,
+                doc.file_size,
             )
         except Exception as exc:
             logger.error("Elasticsearch indexing failed doc_id=%s: %s", doc.doc_id, exc)

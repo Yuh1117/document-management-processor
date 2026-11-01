@@ -33,6 +33,27 @@ VECTOR_SOURCE = "vector"
 UNRANKED = 10**9
 
 
+def like_to_wildcard(pattern: str) -> str:
+    out: list[str] = []
+    for ch in pattern:
+        if ch == "%":
+            out.append("*")
+        elif ch == "_":
+            out.append("?")
+        elif ch in "*?\\":
+            out.append("\\" + ch)
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+@dataclass
+class SearchFilters:
+    mime_pattern: str | None = None
+    size_min: int | None = None
+    size_max: int | None = None
+
+
 @dataclass
 class SearchCandidate:
     document_id: str
@@ -99,11 +120,13 @@ class SearchQueryBuilder:
         page_size: int,
         owner_id: str | None,
         mode: SearchMode,
+        filters: SearchFilters | None = None,
     ) -> dict[str, Any]:
         return self.build_body(
             query=query,
             mode=mode,
             owner_id=owner_id,
+            filters=filters,
             offset=(page - 1) * page_size,
             size=page_size,
             knn_k=self.candidate_size(
@@ -119,11 +142,13 @@ class SearchQueryBuilder:
         candidate_size: int,
         owner_id: str | None,
         mode: SearchMode,
+        filters: SearchFilters | None = None,
     ) -> dict[str, Any]:
         return self.build_body(
             query=query,
             mode=mode,
             owner_id=owner_id,
+            filters=filters,
             offset=0,
             size=candidate_size,
             knn_k=candidate_size,
@@ -137,9 +162,10 @@ class SearchQueryBuilder:
         offset: int,
         size: int,
         knn_k: int,
+        filters: SearchFilters | None = None,
     ) -> dict[str, Any]:
         body = self.templates.get(mode)
-        filters = self.owner_filter(owner_id)
+        filters = self.owner_filter(owner_id) + self.metadata_filter(filters)
 
         body["from"] = offset
         body["size"] = size
@@ -154,6 +180,28 @@ class SearchQueryBuilder:
         if owner_id is None:
             return []
         return [{"term": {"owner_id": str(owner_id)}}]
+
+    @staticmethod
+    def metadata_filter(filters: SearchFilters | None) -> list[dict[str, Any]]:
+        if filters is None:
+            return []
+
+        clauses: list[dict[str, Any]] = []
+
+        if filters.mime_pattern:
+            clauses.append(
+                {"wildcard": {"mime_type": like_to_wildcard(filters.mime_pattern)}}
+            )
+
+        size_range: dict[str, int] = {}
+        if filters.size_min is not None:
+            size_range["gte"] = filters.size_min
+        if filters.size_max is not None:
+            size_range["lte"] = filters.size_max
+        if size_range:
+            clauses.append({"range": {"file_size": size_range}})
+
+        return clauses
 
     def apply_full_text(
         self,
@@ -395,9 +443,15 @@ class SearchService:
         page: int = 1,
         page_size: int = 10,
         mode: SearchMode = SearchMode.SEMANTIC,
+        mime_pattern: str | None = None,
+        size_min: int | None = None,
+        size_max: int | None = None,
     ) -> tuple[list[SearchHit], int]:
         try:
             page, page_size = self.normalize_pagination(page, page_size)
+            filters = SearchFilters(
+                mime_pattern=mime_pattern, size_min=size_min, size_max=size_max
+            )
 
             if mode == SearchMode.HYBRID:
                 return self.hybrid_search(
@@ -405,6 +459,7 @@ class SearchService:
                     owner_id=owner_id,
                     page=page,
                     page_size=page_size,
+                    filters=filters,
                 )
 
             return self.single_mode_search(
@@ -413,6 +468,7 @@ class SearchService:
                 page=page,
                 page_size=page_size,
                 mode=mode,
+                filters=filters,
             )
 
         except HTTPException:
@@ -441,6 +497,7 @@ class SearchService:
         page: int,
         page_size: int,
         mode: SearchMode,
+        filters: SearchFilters | None = None,
     ) -> tuple[list[SearchHit], int]:
         es = es_client.get_client()
 
@@ -450,6 +507,7 @@ class SearchService:
             page_size=page_size,
             owner_id=owner_id,
             mode=mode,
+            filters=filters,
         )
 
         resp = es.search(index=ELASTICSEARCH_INDEX, body=body)
@@ -466,6 +524,7 @@ class SearchService:
         owner_id: str | None,
         page: int,
         page_size: int,
+        filters: SearchFilters | None = None,
     ) -> tuple[list[SearchHit], int]:
         es = es_client.get_client()
 
@@ -475,6 +534,7 @@ class SearchService:
                 candidate_size=SEARCH_MAX_CANDIDATE_SIZE,
                 owner_id=owner_id,
                 mode=mode,
+                filters=filters,
             )
             for mode in (SearchMode.FULL_TEXT, SearchMode.SEMANTIC)
         ]
