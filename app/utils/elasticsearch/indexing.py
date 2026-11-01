@@ -76,6 +76,20 @@ def delete_all_chunks_for_document(es, doc_id: str) -> None:
         )
 
 
+def update_document_name(es, doc_id: str, name: str) -> int:
+    resp = es.update_by_query(
+        index=ELASTICSEARCH_INDEX,
+        query={"term": {"document_id": str(doc_id)}},
+        script={
+            "source": "ctx._source.name = params.name",
+            "params": {"name": name},
+        },
+        conflicts="proceed",
+        refresh=True,
+    )
+    return int(resp.get("updated", 0))
+
+
 def build_chunk_document_body(
     doc_id: str,
     chunk_index: int,

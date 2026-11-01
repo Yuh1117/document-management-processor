@@ -7,6 +7,10 @@ class ReindexRequest(BaseModel):
     name: str | None = None
 
 
+class RenameRequest(BaseModel):
+    name: str
+
+
 class ReindexResponse(BaseModel):
     success: bool
     chunks_indexed: int
