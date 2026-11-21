@@ -18,7 +18,7 @@ from app.constants.defaults import (
     DEFAULT_LANG,
     LLM_PROVIDER_OLLAMA,
 )
-from app.utils.mlflow.summarizer import generate_summary
+from app.utils.mlflow.summarizer import SummaryResult, generate_summary
 
 logger = logging.getLogger(__name__)
 
@@ -94,9 +94,9 @@ class SummarizeService:
 
         try:
             if self.mlflow_model is not None:
-                summary_text = self.predict_via_mlflow(text, language)
+                result = self.predict_via_mlflow(text, language)
             else:
-                summary_text = self.predict_direct(text, language)
+                result = self.predict_direct(text, language)
         except Exception as e:
             logger.error("Summarization failed: %s", e)
             raise HTTPException(status_code=502, detail=f"LLM error ({self.provider}): {str(e)}")
@@ -106,11 +106,11 @@ class SummarizeService:
             self.prompt_version,
             language,
             len(text),
-            len(summary_text),
+            len(result.summary_text),
         )
 
         return {
-            "summary_text": summary_text,
+            "summary_text": result.summary_text,
             "model_name": self.display_name,
             "prompt_version": self.prompt_version,
         }
@@ -139,11 +139,11 @@ class SummarizeService:
             return self.model_name
         return f"{self.provider}/{self.model_name}"
 
-    def predict_via_mlflow(self, text: str, language: str) -> str:
+    def predict_via_mlflow(self, text: str, language: str) -> SummaryResult:
         input_df = pd.DataFrame([{"text": text, "language": language}])
-        return self.mlflow_model.predict(input_df)
+        return SummaryResult(**self.mlflow_model.predict(input_df))
 
-    def predict_direct(self, text: str, language: str) -> str:
+    def predict_direct(self, text: str, language: str) -> SummaryResult:
         logger.info("Summarizing (direct) with model=%s", self.model_name)
         return generate_summary(self.provider, self.model_name, text, language)
 
