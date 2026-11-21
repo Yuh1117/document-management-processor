@@ -15,6 +15,7 @@ from app.core.config import (
 )
 from app.core.constants import DEFAULT_LANG
 from app.llm.constants import LLM_PROVIDER_OLLAMA
+from app.summarize.constants import MLFLOW_EXPERIMENT
 from app.summarize.pipeline import SummaryResult, generate_summary
 from app.summarize.prompts import SUMMARY_PROMPT_VERSION
 
@@ -156,7 +157,7 @@ class SummarizeService:
         output_length: int,
     ) -> None:
         try:
-            mlflow.set_experiment("document-summarization")
+            mlflow.set_experiment(MLFLOW_EXPERIMENT)
             with mlflow.start_run():
                 mlflow.log_params(
                     {

@@ -17,8 +17,7 @@ from app.core.config import (
     OPENAI_MODEL_NAME,
 )
 from app.llm.constants import LLM_PROVIDER_OLLAMA, LLM_PROVIDER_OPENAI, OLLAMA_TIMEOUT
-
-MLFLOW_EXPERIMENT = "document-summarization"
+from app.summarize.constants import MLFLOW_EXPERIMENT
 
 
 def parse_args() -> argparse.Namespace:

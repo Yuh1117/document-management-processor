@@ -15,15 +15,20 @@ from app.core.metrics import (
 from app.embedding.service import embedding_service
 from app.extraction.service import extraction_service
 from app.extraction.text_quality import text_quality_service
-from app.worker.constants import WORKER_THREADS
+from app.worker.constants import (
+    METRICS_PORT,
+    RABBITMQ_BLOCKED_CONNECTION_TIMEOUT,
+    RABBITMQ_HEARTBEAT,
+    WORKER_THREADS,
+)
 from app.worker.processor import DocumentProcessor
 
 logger = logging.getLogger(__name__)
 
 
 def main() -> None:
-    start_metrics_server(8001)
-    logger.info("Prometheus metrics server started on :8001")
+    start_metrics_server(METRICS_PORT)
+    logger.info("Prometheus metrics server started on :%s", METRICS_PORT)
     for status in ("completed", "failed"):
         DOCS_PROCESSED.labels(status=status)
     logger.info(
@@ -37,8 +42,8 @@ def main() -> None:
     )
 
     params = pika.URLParameters(RABBITMQ_URL)
-    params.heartbeat = 600
-    params.blocked_connection_timeout = 300
+    params.heartbeat = RABBITMQ_HEARTBEAT
+    params.blocked_connection_timeout = RABBITMQ_BLOCKED_CONNECTION_TIMEOUT
     connection = pika.BlockingConnection(params)
     channel = connection.channel()
     channel.queue_declare(queue=RABBITMQ_DOCUMENT_QUEUE, durable=True)

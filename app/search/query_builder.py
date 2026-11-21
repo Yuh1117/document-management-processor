@@ -9,7 +9,7 @@ from app.search.constants import (
     SEARCH_DEFAULT_CANDIDATE_SIZE,
     SEARCH_KNN_POOL_SIZE,
     SEARCH_MAX_CANDIDATE_SIZE,
-    SEARCH_SEMANTIC_MIN_SCORE,
+    SEARCH_MIN_COSINE,
     SEMANTIC_QUERY_FILE,
 )
 from app.search.schemas import SearchMode
@@ -203,8 +203,8 @@ class SearchQueryBuilder:
         knn_k: int,
         filters: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        if SEARCH_SEMANTIC_MIN_SCORE is not None:
-            body["min_score"] = SEARCH_SEMANTIC_MIN_SCORE
+        # Elasticsearch scores cosine kNN hits as (1 + cosine) / 2.
+        body["min_score"] = (1 + SEARCH_MIN_COSINE) / 2
 
         self.apply_knn(body, self.embedding.encode_query(query), knn_k, filters)
         return body

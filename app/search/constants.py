@@ -1,6 +1,7 @@
 import os
 
-SEARCH_SEMANTIC_MIN_SCORE = 0.7
+# Minimum cosine similarity (-1..1) between query and chunk vectors.
+SEARCH_MIN_COSINE = 0.4
 SEARCH_KNN_POOL_SIZE = 1000
 SEARCH_RRF_K = 60
 SEARCH_DEFAULT_CANDIDATE_SIZE = 100

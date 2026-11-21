@@ -13,13 +13,13 @@ from app.embedding.service import EmbeddingService, embedding_service
 from app.llm.constants import LLM_PROVIDER_OLLAMA
 from app.llm.factory import get_client
 from app.rag.constants import (
-    RAG_CONTEXT_CHARS,
     RAG_FULL_TEXT_QUERY_FILE,
     RAG_MAX_PASSAGES,
     RAG_MAX_QUESTION_CHARS,
-    RAG_MIN_SIMILARITY,
+    RAG_MIN_COSINE,
     RAG_RETRIEVE_SIZE,
     RAG_SEMANTIC_QUERY_FILE,
+    RAG_SNIPPET_CHARS,
     RAG_TEMPERATURE,
     RAG_TOP_CHUNKS,
     RAG_WINDOW_WORDS,
@@ -41,9 +41,6 @@ from app.search.types import SearchCandidate
 from app.summarize.service import summarize_service
 
 logger = logging.getLogger(__name__)
-
-
-SNIPPET_CHARS = 280
 
 
 def sse(event: str, data: dict[str, Any]) -> str:
@@ -236,19 +233,14 @@ class RagService:
         similarities = self.cosine(np.asarray(query_vector), window_vectors)
 
         passages: list[Passage] = []
-        used_chars = 0
         for idx in np.argsort(-similarities):
             score = float(similarities[idx])
-            if score < RAG_MIN_SIMILARITY or len(passages) >= RAG_MAX_PASSAGES:
+            if score < RAG_MIN_COSINE or len(passages) >= RAG_MAX_PASSAGES:
                 break
 
             passage = candidates[idx]
-            if passages and used_chars + len(passage.text) > RAG_CONTEXT_CHARS:
-                continue
-
             passage.score = score
             passages.append(passage)
-            used_chars += len(passage.text)
 
         return passages
 
@@ -274,7 +266,7 @@ class RagService:
                 "index": i,
                 "document_id": document_id,
                 "name": name,
-                "snippet": truncate(p.text, SNIPPET_CHARS),
+                "snippet": truncate(p.text, RAG_SNIPPET_CHARS),
                 "score": round(p.score, 3),
             }
             for i, p in enumerate(passages, start=1)
