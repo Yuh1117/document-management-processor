@@ -1,3 +1,7 @@
+# Bump whenever any prompt in this file changes (stored with each summary in
+# MLflow and in the backend DB, so results of different prompts can be compared).
+SUMMARY_PROMPT_VERSION = "v2"
+
 EXCERPT_SEPARATOR = "\n[...]\n"
 
 SUMMARY_PROMPTS = {

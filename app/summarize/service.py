@@ -12,11 +12,11 @@ from app.core.config import (
     MLFLOW_SUMMARIZE_MODEL_URI,
     MLFLOW_TRACKING_URI,
     OLLAMA_MODEL_NAME,
-    SUMMARIZE_PROMPT_VERSION,
 )
 from app.core.constants import DEFAULT_LANG
 from app.llm.constants import LLM_PROVIDER_OLLAMA
 from app.summarize.pipeline import SummaryResult, generate_summary
+from app.summarize.prompts import SUMMARY_PROMPT_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
 class SummarizeService:
     def __init__(self) -> None:
         self.mlflow_model = self.load_mlflow_model()
-        self.prompt_version = SUMMARIZE_PROMPT_VERSION
+        self.prompt_version = SUMMARY_PROMPT_VERSION
         self.lock = threading.Lock()
 
     def list_models(self) -> list:
