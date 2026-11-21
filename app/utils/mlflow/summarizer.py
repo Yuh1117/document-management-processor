@@ -2,18 +2,8 @@ import json
 import logging
 import mlflow.pyfunc
 import pandas as pd
-import ollama
-from app.constants.defaults import (
-    DEFAULT_LANG,
-    OLLAMA_KEEP_ALIVE,
-    OLLAMA_MAX_INPUT_CHARS,
-    OLLAMA_NUM_CTX,
-    OLLAMA_NUM_PREDICT,
-    OLLAMA_TIMEOUT,
-)
-from app.core.config import (
-    OLLAMA_HOST,
-)
+from app.constants.defaults import DEFAULT_LANG, LLM_PROVIDER_OLLAMA
+from app.utils.llm import get_client
 
 logger = logging.getLogger(__name__)
 
@@ -41,37 +31,39 @@ PROMPTS = {
 }
 
 
-def generate_summary(
-    client: ollama.Client, model: str, text: str, language: str
-) -> str:
-    if len(text) > OLLAMA_MAX_INPUT_CHARS:
+def generate_summary(provider: str, model: str, text: str, language: str) -> str:
+    client = get_client(provider)
+    if len(text) > client.max_input_chars:
         logger.warning(
             "Input truncated from %d to %d chars for summarization",
             len(text),
-            OLLAMA_MAX_INPUT_CHARS,
+            client.max_input_chars,
         )
-        text = text[:OLLAMA_MAX_INPUT_CHARS]
+        text = text[: client.max_input_chars]
 
     template = PROMPTS.get(language, PROMPTS[DEFAULT_LANG])
-    response = client.generate(
-        model=model,
-        prompt=template.format(text=text),
-        options={"num_ctx": OLLAMA_NUM_CTX, "num_predict": OLLAMA_NUM_PREDICT},
-        keep_alive=OLLAMA_KEEP_ALIVE,
-    )
-    return response.response
+    return client.generate(model, template.format(text=text))
 
 
-class OllamaSummarizer(mlflow.pyfunc.PythonModel):
-    """MLflow PythonModel wrapping a local Ollama model for summarization."""
+class LLMSummarizer(mlflow.pyfunc.PythonModel):
+    """MLflow PythonModel wrapping an LLM (Ollama or OpenAI) for summarization.
+
+    Only the provider and model name are stored in the artifact; credentials
+    such as OPENAI_API_KEY are read from the environment at runtime.
+    """
 
     def load_context(self, context):
         config_path = context.artifacts["config"]
         with open(config_path) as f:
             config = json.load(f)
         self.model_name = config["model_name"]
-        self.client = ollama.Client(host=OLLAMA_HOST, timeout=OLLAMA_TIMEOUT)
-        logger.info("OllamaSummarizer loaded: model=%s", self.model_name)
+        self.provider = config.get("provider", LLM_PROVIDER_OLLAMA)
+        logger.info(
+            "%s loaded: provider=%s model=%s",
+            type(self).__name__,
+            self.provider,
+            self.model_name,
+        )
 
     def predict(self, context, model_input: pd.DataFrame) -> str:
         if hasattr(model_input, "to_dict"):
@@ -84,4 +76,5 @@ class OllamaSummarizer(mlflow.pyfunc.PythonModel):
         text = row["text"]
         language = row.get("language", DEFAULT_LANG)
 
-        return generate_summary(self.client, self.model_name, text, language)
+        return generate_summary(self.provider, self.model_name, text, language)
+

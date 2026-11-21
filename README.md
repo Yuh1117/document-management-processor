@@ -249,5 +249,20 @@ docker compose --profile tools run --rm register python -m scripts.register_mode
 
 Without `--model`, `OLLAMA_MODEL_NAME` is used.
 
+### Using an OpenAI model
+
+Set `OPENAI_API_KEY` (and optionally `OPENAI_MODEL_NAME`, default `gpt-4o-mini`, or
+`OPENAI_BASE_URL` for an OpenAI-compatible endpoint) in `.env`, then register with
+`--provider openai`. The script checks that the model exists for your API key:
+
+```bash
+docker compose --profile tools run --rm register python -m scripts.register_model --provider openai --model gpt-4o-mini
+```
+
+Only the provider and model name are stored in MLflow; the API key is read from the
+environment of the processor at runtime. Once the new version holds the `champion`
+alias, call `POST /models/reload`: both summarization and RAG answering switch to it.
+Note that document text and RAG context are then sent to the OpenAI API.
+
 `POST /models/reload` makes a running server pick up a newly promoted version
 without a restart.

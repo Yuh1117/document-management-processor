@@ -17,6 +17,7 @@ class SummarizeResponse(BaseModel):
 class ModelInfo(BaseModel):
     version: str
     model_name: Optional[str] = None
+    provider: Optional[str] = None
     is_active: bool = False
     created_at: Optional[str] = None
 

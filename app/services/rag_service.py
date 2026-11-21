@@ -6,14 +6,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
-import ollama
 
 from app.constants.defaults import (
     DEFAULT_LANG,
-    OLLAMA_KEEP_ALIVE,
-    OLLAMA_NUM_CTX,
-    OLLAMA_NUM_PREDICT,
-    OLLAMA_TIMEOUT,
+    LLM_PROVIDER_OLLAMA,
     RAG_CONTEXT_CHARS,
     RAG_FULL_TEXT_QUERY_FILE,
     RAG_MAX_PASSAGES,
@@ -25,11 +21,9 @@ from app.constants.defaults import (
     RAG_TOP_CHUNKS,
     RAG_WINDOW_WORDS,
 )
-from app.core.config import (
-    OLLAMA_HOST,
-    OLLAMA_MODEL_NAME,
-)
+from app.core.config import OLLAMA_MODEL_NAME
 from app.core.es import es_client
+from app.utils.llm import get_client
 from app.models.search import SearchMode
 from app.services.embedding_service import EmbeddingService, embedding_service
 from app.services.search_service import (
@@ -133,10 +127,11 @@ class RagService:
         self,
         embedding: EmbeddingService,
         model_name: Callable[[], str | None],
+        provider: Callable[[], str | None],
     ) -> None:
         self.embedding = embedding
         self.model_name = model_name
-        self.client = ollama.Client(host=OLLAMA_HOST, timeout=OLLAMA_TIMEOUT)
+        self.provider = provider
         self.full_text_template = self.load_template(
             SearchMode.FULL_TEXT, RAG_FULL_TEXT_QUERY_FILE
         )
@@ -178,35 +173,23 @@ class RagService:
             yield sse("done", {"model": None})
             return
 
-        model = self.model_name() or OLLAMA_MODEL_NAME
+        model = self.model_name()
+        provider = self.provider() if model else LLM_PROVIDER_OLLAMA
+        model = model or OLLAMA_MODEL_NAME
         prompt = self.build_prompt(question, passages, lang)
 
-        generation = None
         try:
-            generation = self.client.generate(
-                model=model,
-                prompt=prompt,
-                stream=True,
-                options={
-                    "num_ctx": OLLAMA_NUM_CTX,
-                    "num_predict": OLLAMA_NUM_PREDICT,
-                    "temperature": RAG_TEMPERATURE,
-                },
-                keep_alive=OLLAMA_KEEP_ALIVE,
-            )
-            for part in generation:
-                if part.response:
-                    yield sse("token", {"text": part.response})
+            for text in get_client(provider).stream(model, prompt, RAG_TEMPERATURE):
+                yield sse("token", {"text": text})
         except Exception as e:
             logger.exception("RAG generation failed")
             yield sse("error", {"message": f"LLM error: {e}"})
             return
-        finally:
-            close = getattr(generation, "close", None)
-            if close is not None:
-                close()
 
-        yield sse("done", {"model": model})
+        yield sse(
+            "done",
+            {"model": model if provider == LLM_PROVIDER_OLLAMA else f"{provider}/{model}"},
+        )
 
     def retrieve(
         self, question: str, owner_id: str, exclude_document_ids: list[str]
@@ -370,4 +353,5 @@ class RagService:
 rag_service = RagService(
     embedding_service,
     model_name=lambda: summarize_service.model_name,
+    provider=lambda: summarize_service.provider,
 )
