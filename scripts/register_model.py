@@ -3,9 +3,11 @@ import json
 import os
 import sys
 import tempfile
+
 import mlflow
 import mlflow.pyfunc
 import ollama
+
 from app.core.config import (
     MLFLOW_REGISTERED_MODEL_NAME,
     MLFLOW_TRACKING_URI,
@@ -14,11 +16,7 @@ from app.core.config import (
     OPENAI_API_KEY,
     OPENAI_MODEL_NAME,
 )
-from app.constants.defaults import (
-    LLM_PROVIDER_OLLAMA,
-    LLM_PROVIDER_OPENAI,
-    OLLAMA_TIMEOUT,
-)
+from app.llm.constants import LLM_PROVIDER_OLLAMA, LLM_PROVIDER_OPENAI, OLLAMA_TIMEOUT
 
 MLFLOW_EXPERIMENT = "document-summarization"
 
@@ -77,7 +75,7 @@ def ensure_openai_model(model: str) -> None:
     if not OPENAI_API_KEY:
         sys.exit("OPENAI_API_KEY is not set")
     try:
-        from app.utils.llm.openai_client import OpenAIClient
+        from app.llm.openai_client import OpenAIClient
 
         OpenAIClient().client.models.retrieve(model)
     except Exception as e:
@@ -106,7 +104,7 @@ def main():
             if provider == LLM_PROVIDER_OLLAMA:
                 mlflow.log_param("ollama_model", model)
 
-            from app.utils.mlflow.summarizer import LLMSummarizer
+            from app.summarize.mlflow_model import LLMSummarizer
 
             mlflow.pyfunc.log_model(
                 artifact_path="model",

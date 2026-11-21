@@ -1,4 +1,5 @@
 from elasticsearch import Elasticsearch
+
 from app.core.config import ELASTICSEARCH_HOST
 
 

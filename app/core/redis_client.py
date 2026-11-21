@@ -5,10 +5,7 @@ import redis
 from app.core.config import (
     REDIS_URL,
 )
-from app.constants.defaults import (
-    REDIS_CONNECT_TIMEOUT,
-    REDIS_SOCKET_TIMEOUT,
-)
+from app.core.constants import REDIS_CONNECT_TIMEOUT, REDIS_SOCKET_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
