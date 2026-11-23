@@ -11,12 +11,11 @@ from app.core.config import (
     MLFLOW_REGISTERED_MODEL_NAME,
     MLFLOW_SUMMARIZE_MODEL_URI,
     MLFLOW_TRACKING_URI,
-    OLLAMA_MODEL_NAME,
 )
 from app.core.constants import DEFAULT_LANG
 from app.llm.constants import LLM_PROVIDER_OLLAMA
 from app.summarize.constants import MLFLOW_EXPERIMENT
-from app.summarize.pipeline import SummaryResult, generate_summary
+from app.summarize.pipeline import SummaryResult
 from app.summarize.prompts import SUMMARY_PROMPT_VERSION
 
 logger = logging.getLogger(__name__)
@@ -84,18 +83,21 @@ class SummarizeService:
                 "previous_model": old_model_name,
                 "current_model": self.display_name,
                 "mlflow_model_uri": MLFLOW_SUMMARIZE_MODEL_URI,
-                "status": "loaded" if self.mlflow_model is not None else "fallback",
+                "status": "loaded" if self.mlflow_model is not None else "not_loaded",
             }
 
     def summarize(self, text: str, language: str = DEFAULT_LANG) -> dict:
         if not text or not text.strip():
             raise HTTPException(status_code=400, detail="Text must not be empty")
 
+        if self.mlflow_model is None:
+            raise HTTPException(
+                status_code=503,
+                detail=f"No summarizer model loaded from {MLFLOW_SUMMARIZE_MODEL_URI}",
+            )
+
         try:
-            if self.mlflow_model is not None:
-                result = self.predict_via_mlflow(text, language)
-            else:
-                result = self.predict_direct(text, language)
+            result = self.predict_via_mlflow(text, language)
         except Exception as e:
             logger.error("Summarization failed: %s", e)
             raise HTTPException(
@@ -125,10 +127,10 @@ class SummarizeService:
             logger.info("Loaded MLflow model: %s", self.display_name)
             return model
         except Exception as e:
-            self.model_name = OLLAMA_MODEL_NAME
-            self.provider = LLM_PROVIDER_OLLAMA
-            logger.warning(
-                "Could not load MLflow model (%s), falling back to config: %s",
+            self.model_name = None
+            self.provider = None
+            logger.error(
+                "Could not load MLflow model (%s): %s",
                 MLFLOW_SUMMARIZE_MODEL_URI,
                 e,
             )
@@ -143,10 +145,6 @@ class SummarizeService:
     def predict_via_mlflow(self, text: str, language: str) -> SummaryResult:
         input_df = pd.DataFrame([{"text": text, "language": language}])
         return SummaryResult(**self.mlflow_model.predict(input_df))
-
-    def predict_direct(self, text: str, language: str) -> SummaryResult:
-        logger.info("Summarizing (direct) with model=%s", self.model_name)
-        return generate_summary(self.provider, self.model_name, text, language)
 
     @staticmethod
     def log_to_mlflow(

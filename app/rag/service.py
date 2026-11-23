@@ -6,7 +6,6 @@ from typing import Any
 
 import numpy as np
 
-from app.core.config import OLLAMA_MODEL_NAME
 from app.core.constants import DEFAULT_LANG
 from app.core.es import es_client
 from app.embedding.service import EmbeddingService, embedding_service
@@ -99,8 +98,10 @@ class RagService:
             return
 
         model = self.model_name()
-        provider = self.provider() if model else LLM_PROVIDER_OLLAMA
-        model = model or OLLAMA_MODEL_NAME
+        provider = self.provider()
+        if not model:
+            yield sse("error", {"message": "No LLM model loaded from MLflow"})
+            return
         prompt = self.build_prompt(question, passages, lang)
 
         try:

@@ -251,35 +251,18 @@ resolves its model through the `champion` alias
 (`models:/$MLFLOW_REGISTERED_MODEL_NAME@champion`), so a registered version
 carrying that alias must exist before `/summarize` will work.
 
-```bash
-python -m scripts.register_model
-```
-
-From the backend repository, the equivalent one-off container is:
-
-```bash
-docker compose --profile tools run --rm register
-```
-
-To register a different model without touching `.env`, pass `--model`. The script
-first checks that the model has been pulled in Ollama and exits with an error if not:
-
-```bash
-docker exec dms-ollama ollama pull llama3.1:8b
-docker compose --profile tools run --rm register python -m scripts.register_model --model llama3.1:8b
-```
-
-Without `--model`, `OLLAMA_MODEL_NAME` is used.
-
-### Using an OpenAI model
-
-Set `OPENAI_API_KEY` (and optionally `OPENAI_MODEL_NAME`, default `gpt-4o-mini`, or
-`OPENAI_BASE_URL` for an OpenAI-compatible endpoint) in `.env`, then register with
-`--provider openai`. The script checks that the model exists for your API key:
+`--provider` (`ollama` by default, or `openai`) and `--model` choose the LLM; `--model`
+is required. From the backend repository:
 
 ```bash
 docker compose --profile tools run --rm register python -m scripts.register_model --provider openai --model gpt-4o-mini
+docker compose --profile tools run --rm register python -m scripts.register_model --model qwen2.5:3b
 ```
+
+The script checks that the model exists before registering it: for Ollama it must
+already be pulled (`docker exec dms-ollama ollama pull qwen2.5:3b`); for OpenAI,
+`OPENAI_API_KEY` (and optionally `OPENAI_BASE_URL` for an OpenAI-compatible endpoint)
+must be set in `.env` and the model must be available to that key.
 
 Only the provider and model name are stored in MLflow; the API key is read from the
 environment of the processor at runtime. Once the new version holds the `champion`

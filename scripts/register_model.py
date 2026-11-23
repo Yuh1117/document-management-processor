@@ -12,9 +12,7 @@ from app.core.config import (
     MLFLOW_REGISTERED_MODEL_NAME,
     MLFLOW_TRACKING_URI,
     OLLAMA_HOST,
-    OLLAMA_MODEL_NAME,
     OPENAI_API_KEY,
-    OPENAI_MODEL_NAME,
 )
 from app.llm.constants import LLM_PROVIDER_OLLAMA, LLM_PROVIDER_OPENAI, OLLAMA_TIMEOUT
 from app.summarize.constants import MLFLOW_EXPERIMENT
@@ -32,22 +30,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--model",
-        help=(
-            "Model to register, e.g. llama3.1:8b or gpt-4o-mini "
-            f"(default: OLLAMA_MODEL_NAME={OLLAMA_MODEL_NAME} / "
-            f"OPENAI_MODEL_NAME={OPENAI_MODEL_NAME})"
-        ),
+        required=True,
+        help="Model to register, e.g. gpt-4o-mini or qwen2.5:3b",
     )
-    args = parser.parse_args()
-    if not args.model:
-        args.model = (
-            OPENAI_MODEL_NAME
-            if args.provider == LLM_PROVIDER_OPENAI
-            else OLLAMA_MODEL_NAME
-        )
-    if not args.model:
-        parser.error("--model is required (no default model configured)")
-    return args
+    return parser.parse_args()
 
 
 def normalize_tag(name: str) -> str:
