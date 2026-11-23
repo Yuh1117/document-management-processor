@@ -25,8 +25,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--provider",
         choices=[LLM_PROVIDER_OLLAMA, LLM_PROVIDER_OPENAI],
-        default=LLM_PROVIDER_OLLAMA,
-        help="LLM provider (default: ollama)",
+        required=True,
+        help="LLM provider",
     )
     parser.add_argument(
         "--model",

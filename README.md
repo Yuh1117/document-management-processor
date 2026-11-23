@@ -251,12 +251,12 @@ resolves its model through the `champion` alias
 (`models:/$MLFLOW_REGISTERED_MODEL_NAME@champion`), so a registered version
 carrying that alias must exist before `/summarize` will work.
 
-`--provider` (`ollama` by default, or `openai`) and `--model` choose the LLM; `--model`
-is required. From the backend repository:
+`--provider` (`openai` or `ollama`) and `--model` are both required. From the backend
+repository:
 
 ```bash
-docker compose --profile tools run --rm register python -m scripts.register_model --provider openai --model gpt-4o-mini
-docker compose --profile tools run --rm register python -m scripts.register_model --model qwen2.5:3b
+docker compose --profile tools run --rm register --provider openai --model gpt-4o-mini
+docker compose --profile tools run --rm register --provider ollama --model qwen2.5:3b
 ```
 
 The script checks that the model exists before registering it: for Ollama it must
