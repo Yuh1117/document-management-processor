@@ -1,0 +1,9 @@
+import numpy as np
+
+QUERY_EMBEDDING_CACHE_PREFIX = "emb:q"
+QUERY_EMBEDDING_CACHE_TTL = 21600
+
+VECTOR_DTYPE = np.float32
+
+E5_QUERY_PREFIX = "query: "
+E5_PASSAGE_PREFIX = "passage: "

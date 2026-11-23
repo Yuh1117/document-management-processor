@@ -3,20 +3,19 @@ import json
 import os
 import sys
 import tempfile
+
 import mlflow
 import mlflow.pyfunc
 import ollama
+
 from app.core.config import (
     MLFLOW_REGISTERED_MODEL_NAME,
     MLFLOW_TRACKING_URI,
     OLLAMA_HOST,
-    OLLAMA_MODEL_NAME,
+    OPENAI_API_KEY,
 )
-from app.constants.defaults import (
-    OLLAMA_TIMEOUT,
-)
-
-MLFLOW_EXPERIMENT = "document-summarization"
+from app.llm.constants import LLM_PROVIDER_OLLAMA, LLM_PROVIDER_OPENAI, OLLAMA_TIMEOUT
+from app.summarize.constants import MLFLOW_EXPERIMENT
 
 
 def parse_args() -> argparse.Namespace:
@@ -24,14 +23,17 @@ def parse_args() -> argparse.Namespace:
         description="Register a new version of the summarizer in the MLflow Model Registry."
     )
     parser.add_argument(
-        "--model",
-        default=OLLAMA_MODEL_NAME,
-        help=f"Ollama model to register, e.g. llama3.1:8b (default: {OLLAMA_MODEL_NAME})",
+        "--provider",
+        choices=[LLM_PROVIDER_OLLAMA, LLM_PROVIDER_OPENAI],
+        required=True,
+        help="LLM provider",
     )
-    args = parser.parse_args()
-    if not args.model:
-        parser.error("--model is required (OLLAMA_MODEL_NAME is not set)")
-    return args
+    parser.add_argument(
+        "--model",
+        required=True,
+        help="Model to register, e.g. gpt-4o-mini or qwen2.5:3b",
+    )
+    return parser.parse_args()
 
 
 def normalize_tag(name: str) -> str:
@@ -54,29 +56,46 @@ def ensure_model_pulled(model: str) -> None:
         )
 
 
+def ensure_openai_model(model: str) -> None:
+    if not OPENAI_API_KEY:
+        sys.exit("OPENAI_API_KEY is not set")
+    try:
+        from app.llm.openai_client import OpenAIClient
+
+        OpenAIClient().client.models.retrieve(model)
+    except Exception as e:
+        sys.exit(f"Cannot verify OpenAI model '{model}': {e}")
+
+
 def main():
-    model = parse_args().model
-    ensure_model_pulled(model)
+    args = parse_args()
+    provider, model = args.provider, args.model
+    if provider == LLM_PROVIDER_OPENAI:
+        ensure_openai_model(model)
+    else:
+        ensure_model_pulled(model)
 
     mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
     mlflow.set_experiment(MLFLOW_EXPERIMENT)
 
-    config = {"model_name": model}
+    config = {"provider": provider, "model_name": model}
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tmp:
         json.dump(config, tmp)
         config_path = tmp.name
 
     try:
-        with mlflow.start_run(run_name="register-ollama-summarizer"):
-            mlflow.log_param("ollama_model", model)
+        with mlflow.start_run(run_name=f"register-{provider}-summarizer"):
+            mlflow.log_params({"provider": provider, "model_name": model})
+            if provider == LLM_PROVIDER_OLLAMA:
+                mlflow.log_param("ollama_model", model)
 
-            from app.utils.mlflow.ollama_summarizer import OllamaSummarizer
+            from app.summarize.mlflow_model import LLMSummarizer
 
             mlflow.pyfunc.log_model(
                 artifact_path="model",
-                python_model=OllamaSummarizer(),
+                python_model=LLMSummarizer(),
                 artifacts={"config": config_path},
-                metadata={"model_name": model},
+                metadata={"provider": provider, "model_name": model},
             )
             run_id = mlflow.active_run().info.run_id
 
@@ -90,10 +109,16 @@ def main():
             key="model_name",
             value=model,
         )
+        client.set_model_version_tag(
+            name=MLFLOW_REGISTERED_MODEL_NAME,
+            version=result.version,
+            key="provider",
+            value=provider,
+        )
 
         print(
             f"Registered: {MLFLOW_REGISTERED_MODEL_NAME} version {result.version} "
-            f"(model={model})"
+            f"(provider={provider}, model={model})"
         )
 
     finally:

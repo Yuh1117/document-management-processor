@@ -1,0 +1,63 @@
+{
+  "from": 0,
+  "size": 10,
+  "track_total_hits": false,
+  "_source": ["document_id", "name", "content"],
+  "collapse": {
+    "field": "document_id",
+    "inner_hits": {
+      "name": "best_chunks",
+      "size": 3,
+      "_source": ["content"],
+      "sort": [
+        {
+          "_score": "desc"
+        }
+      ],
+      "highlight": {
+        "pre_tags": ["<mark>"],
+        "post_tags": ["</mark>"],
+        "fields": {
+          "content": {
+            "fragment_size": 180,
+            "number_of_fragments": 3,
+            "no_match_size": 320
+          }
+        }
+      }
+    }
+  },
+  "aggs": {
+    "unique_document_count": {
+      "cardinality": {
+        "field": "document_id",
+        "precision_threshold": 40000
+      }
+    }
+  },
+  "query": {
+    "bool": {
+      "must": [
+        {
+          "match": {
+            "content": {
+              "query": "",
+              "boost": 1.0
+            }
+          }
+        }
+      ],
+      "should": [
+        {
+          "match": {
+            "name": {
+              "query": "",
+              "boost": 1.2
+            }
+          }
+        }
+      ],
+      "filter": []
+    }
+  }
+}
