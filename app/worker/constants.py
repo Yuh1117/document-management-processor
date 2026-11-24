@@ -1,4 +1,7 @@
-WORKER_THREADS = 4
+import os
+
+WORKER_THREADS = max(1, int(os.getenv("WORKER_THREADS", "2")))
+TORCH_NUM_THREADS = max(1, int(os.getenv("TORCH_NUM_THREADS", "2")))
 
 METRICS_PORT = 8001
 
