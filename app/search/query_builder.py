@@ -123,7 +123,9 @@ class SearchQueryBuilder:
             filters=filters,
             offset=0,
             size=candidate_size,
-            knn_k=candidate_size,
+            # k counts chunks, not documents: one long file can fill a small k
+            # and leave few distinct documents after collapse.
+            knn_k=max(candidate_size, SEARCH_KNN_POOL_SIZE),
         )
 
     def build_body(

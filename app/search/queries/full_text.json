@@ -42,7 +42,8 @@
           "match": {
             "content": {
               "query": "",
-              "boost": 1.0
+              "boost": 1.0,
+              "minimum_should_match": "2<75%"
             }
           }
         }

@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from app.core.config import ELASTICSEARCH_INDEX
 from app.core.es import es_client
 from app.embedding.service import EmbeddingService, embedding_service
-from app.search.constants import SEARCH_MAX_CANDIDATE_SIZE
+from app.search.constants import SEARCH_HYBRID_WINDOW
 from app.search.query_builder import TEMPLATE_PATHS, QueryTemplates, SearchQueryBuilder
 from app.search.response_parser import SearchResponseParser
 from app.search.rrf import RRFMerger
@@ -125,10 +125,14 @@ class SearchService:
     ) -> tuple[list[SearchHit], int]:
         es = es_client.get_client()
 
+        # RRF scores by rank only, so every candidate in either list gets a
+        # score: a 1000-deep window lets weak tail hits flood the result. The
+        # window must not depend on the page, or the merged ranking (and total)
+        # shifts between pages and items repeat or go missing.
         bodies = [
             self.builder.build_candidate(
                 query=query,
-                candidate_size=SEARCH_MAX_CANDIDATE_SIZE,
+                candidate_size=SEARCH_HYBRID_WINDOW,
                 owner_id=owner_id,
                 mode=mode,
                 filters=filters,
