@@ -19,6 +19,7 @@ from app.worker.constants import (
     METRICS_PORT,
     RABBITMQ_BLOCKED_CONNECTION_TIMEOUT,
     RABBITMQ_HEARTBEAT,
+    TORCH_NUM_THREADS,
     WORKER_THREADS,
 )
 from app.worker.processor import DocumentProcessor
@@ -26,7 +27,17 @@ from app.worker.processor import DocumentProcessor
 logger = logging.getLogger(__name__)
 
 
+def _limit_cpu_threads() -> None:
+    import cv2
+    import torch
+
+    torch.set_num_threads(TORCH_NUM_THREADS)
+    # OpenCV (used for OCR image checks) spawns its own pool per call.
+    cv2.setNumThreads(1)
+
+
 def main() -> None:
+    _limit_cpu_threads()
     start_metrics_server(METRICS_PORT)
     logger.info("Prometheus metrics server started on :%s", METRICS_PORT)
     for status in ("completed", "failed"):

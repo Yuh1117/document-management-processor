@@ -14,3 +14,15 @@ RAG_MAX_QUESTION_CHARS = 500
 QUERIES_DIR = os.path.join(os.path.dirname(__file__), "queries")
 RAG_FULL_TEXT_QUERY_FILE = os.path.join(QUERIES_DIR, "full_text.json")
 RAG_SEMANTIC_QUERY_FILE = os.path.join(QUERIES_DIR, "semantic.json")
+
+# Share of the model's input budget that history and a read document may use.
+RAG_HISTORY_INPUT_SHARE = 0.2
+RAG_READ_INPUT_SHARE = 0.4
+
+# Tool calling, per answer: model rounds, tool calls in total, and whole-document
+# reads (the costliest tool) among them.
+RAG_MAX_ROUNDS = 5
+RAG_MAX_TOOL_CALLS = 6
+RAG_MAX_READS = 2
+RAG_FIND_LIMIT = 8
+RAG_READ_MAX_CHUNKS = 400
